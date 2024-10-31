@@ -1,60 +1,54 @@
-#![deny(unsafe_code)]
 #![no_main]
 #![no_std]
 
+
+use nrf52833_hal::Rng;
+use smart_leds::RGB8;
+use smart_leds_trait::SmartLedsWrite;
+use ws2812_nrf52833_pwm::Ws2812;
+
 use cortex_m_rt::entry;
-use microbit::{board::Board, display::blocking::Display};
-use microbit::hal::Timer;
-// use embedded_hal::delay::DelayNs;
-use panic_rtt_target as _;
+use embedded_hal::delay::DelayNs;
+use microbit::{board::Board, hal::Timer};
 use rtt_target::{rprintln, rtt_init_print};
 
-fn clear(leds: &mut [[u8; 5]; 5]) {
-    for r in leds {
-        for i in r {
-            *i = 0;
-        }
-    }
-}
-const DIRECTIONS: [(i8, i8); 4] = [(0, 1), (1, 0), (0, -1), (-1, 0)];
-
+use panic_halt as _;
 
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
     let board = Board::take().unwrap();
     let mut timer = Timer::new(board.TIMER0);
-    let mut display = Display::new(board.display_pins);
-    rprintln!("hello world");
+    let pin = board.edge.e16.degrade();
+    let mut ws2812: Ws2812<{ 256 * 24 }, _> = Ws2812::new(board.PWM0, pin);
 
-    let mut leds = [
-        [1, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0],
-        [0, 0, 0, 0, 0],
+    let leds = [
+        RGB8::new(12, 0, 0),
+        RGB8::new(0, 12, 0),
+        RGB8::new(0, 0, 12),
+        RGB8::new(12, 12, 0),
+        RGB8::new(0, 12, 12),
+        RGB8::new(12, 0, 12),
+        RGB8::new(10, 10, 10),
+        RGB8::new(12, 6, 0),
     ];
 
+    rprintln!("starting");
 
-    let mut pos: (i8, i8) = (0, 0);
+    ws2812.write(leds[..4].iter().cloned()).unwrap();
+
+    rprintln!("displaying indices");
+
+    rprintln!("starting loop");
+
+    let nleds = leds.len();
+    let mut cur_leds: [RGB8; 256] = [RGB8::default();256];
+    let mut r = Rng::new(board.RNG);
     loop {
-        for dir in DIRECTIONS {
-            loop {
-                rprintln!("Roll! {:?} -> {:?}", dir, pos);
-                let new_y = pos.0 + dir.0;
-                if new_y < 0 || new_y >= leds[0].len() as i8 {
-                    break
-                }
-                let new_x = pos.1 + dir.1;
-                if new_x < 0 || new_x >= leds.len() as i8 {
-                    break
-                }
-                display.show(&mut timer, leds, 500);
-                clear(&mut leds);
-                pos.0 = new_y;
-                pos.1 = new_x;
-                leds[pos.0 as usize][pos.1 as usize] = 1;
-            }
-        }
+        let idx = r.random_u8();
+        let color = r.random_u8();
+        cur_leds[idx as usize] = leds[color as usize % nleds];
+        ws2812.write(cur_leds).unwrap();
+        timer.delay_ms(1);
     }
 }
