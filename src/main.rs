@@ -3,7 +3,7 @@
 
 use no_std_strings::str32;
 use nrf52833_hal::Rng;
-use smart_leds::RGB8;
+use smart_leds::{colors, RGB8};
 use smart_leds_trait::SmartLedsWrite;
 use ws2812_nrf52833_pwm::Ws2812;
 
@@ -19,12 +19,73 @@ struct Figure {
     wh: u8,
 }
 
+const SCREEN_WIDTH: usize = 8;
+const SCREEN_HEIGHT: usize = 32;
+
+#[derive(Copy, Clone, Debug)]
+enum ColorIdx {
+    Brick,
+    Red,
+    Green,
+    Blue,
+    Pink,
+    Yellow,
+    ColorArraySize,
+}
+const C_IDX_BRICK: usize = ColorIdx::Brick as usize;
+const C_IDX_RED: usize = ColorIdx::Red as usize;
+const C_IDX_GREEN: usize = ColorIdx::Green as usize;
+const C_IDX_BLUE: usize = ColorIdx::Blue as usize;
+const C_IDX_PINK: usize = ColorIdx::Pink as usize;
+const C_IDX_YELLOW: usize = ColorIdx::Yellow as usize;
+
+impl From<usize> for ColorIdx {
+    fn from(value: usize) -> Self {
+        match value {
+            C_IDX_BRICK => ColorIdx::Brick,
+            C_IDX_RED => ColorIdx::Red,
+            C_IDX_GREEN => ColorIdx::Green,
+            C_IDX_BLUE => ColorIdx::Blue,
+            C_IDX_PINK => ColorIdx::Pink,
+            C_IDX_YELLOW => ColorIdx::Yellow,
+            _ => panic!("out of range {}", value),
+        }
+    }
+}
+
+const COLORS: [RGB8; ColorIdx::ColorArraySize as usize] = [
+    RGB8::new(12, 2, 0),
+    RGB8::new(6, 0, 0),
+    RGB8::new(0, 6, 0),
+    RGB8::new(0, 0, 6),
+    RGB8::new(3, 0, 3),
+    RGB8::new(6, 6, 0),
+];
+
+type Painter = fn(&mut [RGB8], u8, u8, ColorIdx) -> bool;
+
+const DIGITS: &str = r"
+###|  #|###|###|# #|###|###|###|###|###
+# #| ##|  #|  #|# #|#  |#  |  #|# #|# #
+# #|  #|###|###|###|###|###|  #|###|###
+# #|  #|#  |  #|  #|  #|# #|  #|# #|  #
+###|  #|###|###|  #|###|###|  #|###|###
+";
+
+const EIGHT: &str = r"
+###
+# #
+###
+# #
+###
+";
+
 impl Figure {
     fn from_str(figure: &'static str) -> Self {
         let mut data = 0;
         let mut width = 0;
         let mut height = 0;
-        for (idx, line) in figure.lines().enumerate() {
+        for (idx, line) in figure.trim().lines().enumerate() {
             if idx == 0 {
                 width = line.len() as u8;
             }
@@ -55,18 +116,57 @@ impl Figure {
     fn str(&self) -> str32 {
         let mut repr = str32::new();
         let mut cursor: u16 = 1 << self.len();
-        let mut shift: u8 = 0;
         while cursor != 0 {
-            let ch = if self.data & cursor != 0 { '#' } else { ' ' };
-            repr.set(shift as usize + cursor.trailing_zeros() as usize, ch);
+            let ch = if self.data & cursor != 0 { "#" } else { " " };
+            repr.push(ch);
             if self.len() - cursor.trailing_zeros() as u8 % self.width() == 0 {
-                shift += 1;
-                repr.set(shift as usize + cursor.trailing_zeros() as usize, '\n');
+                repr.push("\n");
             }
             cursor >>= 1;
         }
         repr
     }
+}
+
+fn dot(m: &mut [RGB8], x: u8, y: u8, color: ColorIdx) -> bool {
+    let mut x = x;
+    if y & 1 != 1 {
+        x = 7 - x;
+    }
+    m[SCREEN_WIDTH * y as usize + x as usize] = COLORS[color as usize];
+
+    true
+}
+
+fn draw_figure(
+    m: &mut [RGB8],
+    f: &Figure,
+    x: u8,
+    y: u8,
+    color: ColorIdx,
+    paniter: Painter,
+) -> bool {
+    let mut row: u8 = 0;
+    let mut col: u8 = 0;
+    let mut cursor: u16 = 1 << f.len();
+    while cursor != 0 {
+        if f.data & cursor != 0 && !paniter(m, x + col, y + row, color) {
+            return false;
+        }
+        col += 1;
+        if col == f.width() {
+            row += 1;
+            col = 0;
+        }
+        cursor >>= 1;
+    }
+    true
+}
+
+fn clear(m: &mut [RGB8]) {
+    (0..m.len()).for_each(|idx| {
+        m[idx] = colors::BLACK;
+    });
 }
 
 #[entry]
@@ -76,28 +176,27 @@ fn main() -> ! {
     let mut timer = Timer::new(board.TIMER0);
     let pin = board.edge.e16.degrade();
     let mut ws2812: Ws2812<{ 256 * 24 }, _> = Ws2812::new(board.PWM0, pin);
+    let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
-    let leds = [
-        RGB8::new(12, 0, 0),
-        RGB8::new(0, 12, 0),
-        RGB8::new(0, 0, 12),
-        RGB8::new(12, 12, 0),
-        RGB8::new(0, 12, 12),
-        RGB8::new(12, 0, 12),
-        RGB8::new(10, 10, 10),
-        RGB8::new(12, 6, 0),
-    ];
+    let mut r = Rng::new(board.RNG);
+    let eight = Figure::from_str(EIGHT);
+    rprintln!("created figure: {}", eight.str());
+
+    let x = 3;
+    let mut y = 4;
 
     rprintln!("starting loop");
-
-    let nleds = leds.len();
-    let mut cur_leds: [RGB8; 256] = [RGB8::default(); 256];
-    let mut r = Rng::new(board.RNG);
     loop {
-        let idx = r.random_u8();
-        let color = r.random_u8();
-        cur_leds[idx as usize] = leds[color as usize % nleds];
-        ws2812.write(cur_leds).unwrap();
-        timer.delay_ms(1);
+        let color = ColorIdx::from(r.random_u8() as usize % COLORS.len());
+        clear(&mut leds);
+        rprintln!("draw at x={} y={} color={:?}", x, y, color);
+        _ = draw_figure(&mut leds, &eight, x, y, color, dot);
+        ws2812.write(leds).unwrap();
+        rprintln!("sleep");
+        timer.delay_ms(1000);
+        y += 1;
+        if (y + eight.height()) as usize  > SCREEN_HEIGHT {
+            y = 0;
+        }
     }
 }
