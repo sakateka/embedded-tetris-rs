@@ -1,6 +1,8 @@
 #![no_main]
 #![no_std]
 
+use core::ops::Index;
+
 use no_std_strings::str32;
 use nrf52833_hal::Rng;
 use smart_leds::{colors, RGB8};
@@ -53,7 +55,9 @@ impl From<usize> for ColorIdx {
     }
 }
 
-const COLORS: [RGB8; ColorIdx::ColorArraySize as usize] = [
+type ColorsType = [RGB8; ColorIdx::ColorArraySize as usize];
+
+const COLORS: ColorsType = [
     RGB8::new(12, 2, 0),
     RGB8::new(6, 0, 0),
     RGB8::new(0, 6, 0),
@@ -62,7 +66,28 @@ const COLORS: [RGB8; ColorIdx::ColorArraySize as usize] = [
     RGB8::new(6, 6, 0),
 ];
 
-type Painter = fn(&mut [RGB8], u8, u8, ColorIdx) -> bool;
+impl Index<ColorIdx> for ColorsType {
+    type Output = RGB8;
+    fn index(&self, index: ColorIdx) -> &Self::Output {
+        &self[index as usize]
+    }
+}
+
+trait ColorsIndexer<'a> {
+    fn at(&self, idx: usize) -> RGB8;
+
+}
+
+impl<'a> ColorsIndexer<'a> for ColorsType {
+    fn at(&self, idx: usize) -> RGB8 {
+        if idx >= self.len() {
+            return colors::RED; // bright RED indicates an error
+        }
+        self[idx]
+    }
+}
+
+type Painter = fn(&mut [RGB8], u8, u8, RGB8) -> bool;
 
 const DIGITS: &str = r"
 ###|  #|###|###|# #|###|###|###|###|###
@@ -119,7 +144,8 @@ impl Figure {
         while cursor != 0 {
             let ch = if self.data & cursor != 0 { "#" } else { " " };
             repr.push(ch);
-            if self.len() - cursor.trailing_zeros() as u8 % self.width() == 0 {
+            let row_size = ((self.len() - cursor.trailing_zeros() as u8) % self.width()) + 1;
+            if row_size == self.width() {
                 repr.push("\n");
             }
             cursor >>= 1;
@@ -128,12 +154,12 @@ impl Figure {
     }
 }
 
-fn dot(m: &mut [RGB8], x: u8, y: u8, color: ColorIdx) -> bool {
+fn dot(m: &mut [RGB8], x: u8, y: u8, color: RGB8) -> bool {
     let mut x = x;
     if y & 1 != 1 {
         x = 7 - x;
     }
-    m[SCREEN_WIDTH * y as usize + x as usize] = COLORS[color as usize];
+    m[SCREEN_WIDTH * y as usize + x as usize] = color;
 
     true
 }
@@ -143,7 +169,7 @@ fn draw_figure(
     f: &Figure,
     x: u8,
     y: u8,
-    color: ColorIdx,
+    color: RGB8,
     paniter: Painter,
 ) -> bool {
     let mut row: u8 = 0;
@@ -180,14 +206,14 @@ fn main() -> ! {
 
     let mut r = Rng::new(board.RNG);
     let eight = Figure::from_str(EIGHT);
-    rprintln!("created figure: {}", eight.str());
+    rprintln!("created figure:\n{}", eight.str());
 
     let x = 3;
     let mut y = 4;
 
     rprintln!("starting loop");
     loop {
-        let color = ColorIdx::from(r.random_u8() as usize % COLORS.len());
+        let color = COLORS.at(r.random_u8() as usize % COLORS.len());
         clear(&mut leds);
         rprintln!("draw at x={} y={} color={:?}", x, y, color);
         _ = draw_figure(&mut leds, &eight, x, y, color, dot);
