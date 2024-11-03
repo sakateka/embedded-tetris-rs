@@ -16,11 +16,6 @@ use rtt_target::{rprintln, rtt_init_print};
 
 use panic_halt as _;
 
-struct Figure {
-    data: u16,
-    wh: u8,
-}
-
 const SCREEN_WIDTH: usize = 8;
 const SCREEN_HEIGHT: usize = 32;
 
@@ -89,14 +84,6 @@ impl<'a> ColorsIndexer<'a> for ColorsType {
 
 type Painter = fn(&mut [RGB8], u8, u8, RGB8) -> bool;
 
-const DIGITS: &str = r"
-###|  #|###|###|# #|###|###|###|###|###
-# #| ##|  #|  #|# #|#  |#  |  #|# #|# #
-# #|  #|###|###|###|###|###|  #|###|###
-# #|  #|#  |  #|  #|  #|# #|  #|# #|  #
-###|  #|###|###|  #|###|###|  #|###|###
-";
-
 const EIGHT: &str = r"
 ###
 # #
@@ -104,6 +91,11 @@ const EIGHT: &str = r"
 # #
 ###
 ";
+
+struct Figure {
+    data: u16,
+    wh: u8,
+}
 
 impl Figure {
     fn from_str(figure: &'static str) -> Self {
