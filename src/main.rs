@@ -1,9 +1,10 @@
 #![no_main]
 #![no_std]
 
+mod figure;
+
 use core::ops::Index;
 
-use no_std_strings::str32;
 use nrf52833_hal::Rng;
 use smart_leds::{colors, RGB8};
 use smart_leds_trait::SmartLedsWrite;
@@ -15,6 +16,8 @@ use microbit::{board::Board, hal::Timer};
 use rtt_target::{rprintln, rtt_init_print};
 
 use panic_halt as _;
+
+use figure::{Figure, Digits, Tetramino};
 
 const SCREEN_WIDTH: usize = 8;
 const SCREEN_HEIGHT: usize = 32;
@@ -84,68 +87,6 @@ impl<'a> ColorsIndexer<'a> for ColorsType {
 
 type Painter = fn(&mut [RGB8], u8, u8, RGB8) -> bool;
 
-const EIGHT: &str = r"
-###
-# #
-###
-# #
-###
-";
-
-struct Figure {
-    data: u16,
-    wh: u8,
-}
-
-impl Figure {
-    fn from_str(figure: &'static str) -> Self {
-        let mut data = 0;
-        let mut width = 0;
-        let mut height = 0;
-        for (idx, line) in figure.trim().lines().enumerate() {
-            if idx == 0 {
-                width = line.len() as u8;
-            }
-            height += 1;
-            for ch in line.chars() {
-                data |= if ch == '#' { 1 } else { 0 };
-                data <<= 1;
-            }
-        }
-        Self {
-            data,
-            wh: width << 4 | height,
-        }
-    }
-
-    fn width(&self) -> u8 {
-        self.wh >> 4
-    }
-
-    fn height(&self) -> u8 {
-        self.wh & 0x0f
-    }
-
-    fn len(&self) -> u8 {
-        self.height() * self.width()
-    }
-
-    fn str(&self) -> str32 {
-        let mut repr = str32::new();
-        let mut cursor: u16 = 1 << self.len();
-        while cursor != 0 {
-            let ch = if self.data & cursor != 0 { "#" } else { " " };
-            repr.push(ch);
-            let row_size = ((self.len() - cursor.trailing_zeros() as u8) % self.width()) + 1;
-            if row_size == self.width() {
-                repr.push("\n");
-            }
-            cursor >>= 1;
-        }
-        repr
-    }
-}
-
 fn dot(m: &mut [RGB8], x: u8, y: u8, color: RGB8) -> bool {
     let mut x = x;
     if y & 1 != 1 {
@@ -187,9 +128,12 @@ fn clear(m: &mut [RGB8]) {
     });
 }
 
+include!(concat!(env!("OUT_DIR"), "/figures.rs"));
+
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
+    rprintln!("message from build.rs: {}", DIGITS[8].str());
     let board = Board::take().unwrap();
     let mut timer = Timer::new(board.TIMER0);
     let pin = board.edge.e16.degrade();
@@ -197,23 +141,26 @@ fn main() -> ! {
     let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
     let mut r = Rng::new(board.RNG);
-    let eight = Figure::from_str(EIGHT);
-    rprintln!("created figure:\n{}", eight.str());
+    rprintln!("created figure(1):\n{}", DIGITS[1].str());
 
     let x = 3;
     let mut y = 4;
 
     rprintln!("starting loop");
+    let mut digit_idx: u8 = 0;
     loop {
         let color = COLORS.at(r.random_u8() as usize % COLORS.len());
         clear(&mut leds);
         rprintln!("draw at x={} y={} color={:?}", x, y, color);
-        _ = draw_figure(&mut leds, &eight, x, y, color, dot);
+        digit_idx += 1;
+        let digit = DIGITS.wrapping_at(digit_idx);
+
+        _ = draw_figure(&mut leds, digit, x, y, color, dot);
         ws2812.write(leds).unwrap();
         rprintln!("sleep");
         timer.delay_ms(1000);
         y += 1;
-        if (y + eight.height()) as usize  > SCREEN_HEIGHT {
+        if (y + digit.height()) as usize  > SCREEN_HEIGHT {
             y = 0;
         }
     }
