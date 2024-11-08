@@ -1,20 +1,26 @@
-#![no_main]
-#![no_std]
+#![cfg_attr(not(test), no_main)] 
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(test, allow(dead_code))]
+#![cfg_attr(test, allow(unused))]
 
 mod figure;
 
 use core::ops::Index;
 
+#[cfg(not(test))]
 use nrf52833_hal::Rng;
 use smart_leds::{colors, RGB8};
 use smart_leds_trait::SmartLedsWrite;
 use ws2812_nrf52833_pwm::Ws2812;
 
+#[cfg(not(test))]
 use cortex_m_rt::entry;
 use embedded_hal::delay::DelayNs;
 use microbit::{board::Board, hal::Timer};
+#[cfg(not(test))]
 use rtt_target::{rprintln, rtt_init_print};
 
+#[cfg(not(test))]
 use panic_halt as _;
 
 use figure::{Figure, Digits, Tetramino};
@@ -85,8 +91,6 @@ impl<'a> ColorsIndexer<'a> for ColorsType {
     }
 }
 
-type Painter = fn(&mut [RGB8], u8, u8, RGB8) -> bool;
-
 fn dot(m: &mut [RGB8], x: u8, y: u8, color: RGB8) -> bool {
     let mut x = x;
     if y & 1 != 1 {
@@ -94,31 +98,6 @@ fn dot(m: &mut [RGB8], x: u8, y: u8, color: RGB8) -> bool {
     }
     m[SCREEN_WIDTH * y as usize + x as usize] = color;
 
-    true
-}
-
-fn draw_figure(
-    m: &mut [RGB8],
-    f: &Figure,
-    x: u8,
-    y: u8,
-    color: RGB8,
-    paniter: Painter,
-) -> bool {
-    let mut row: u8 = 0;
-    let mut col: u8 = 0;
-    let mut cursor: u16 = 1 << f.len();
-    while cursor != 0 {
-        if f.data & cursor != 0 && !paniter(m, x + col, y + row, color) {
-            return false;
-        }
-        col += 1;
-        if col == f.width() {
-            row += 1;
-            col = 0;
-        }
-        cursor >>= 1;
-    }
     true
 }
 
@@ -130,10 +109,11 @@ fn clear(m: &mut [RGB8]) {
 
 include!(concat!(env!("OUT_DIR"), "/figures.rs"));
 
+#[cfg(not(test))]
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
-    rprintln!("message from build.rs: {}", DIGITS[8].str());
+    rprintln!("message from build.rs:\n{}", DIGITS.wrapping_at(8).str());
     let board = Board::take().unwrap();
     let mut timer = Timer::new(board.TIMER0);
     let pin = board.edge.e16.degrade();
@@ -141,7 +121,7 @@ fn main() -> ! {
     let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
     let mut r = Rng::new(board.RNG);
-    rprintln!("created figure(1):\n{}", DIGITS[1].str());
+    rprintln!("created figure(1):\n{}", DIGITS.wrapping_at(1).str());
 
     let x = 3;
     let mut y = 4;
@@ -153,9 +133,12 @@ fn main() -> ! {
         clear(&mut leds);
         rprintln!("draw at x={} y={} color={:?}", x, y, color);
         digit_idx += 1;
-        let digit = DIGITS.wrapping_at(digit_idx);
+        let mut digit = DIGITS.wrapping_at(digit_idx);
+        if digit_idx & 1 == 1 {
+           digit = digit.rotate();
+        }
 
-        _ = draw_figure(&mut leds, digit, x, y, color, dot);
+        _ = digit.draw(&mut leds, x, y, color, dot);
         ws2812.write(leds).unwrap();
         rprintln!("sleep");
         timer.delay_ms(1000);
@@ -165,3 +148,6 @@ fn main() -> ! {
         }
     }
 }
+
+#[cfg(test)]
+fn main() {}

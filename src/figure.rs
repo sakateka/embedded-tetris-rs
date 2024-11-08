@@ -1,10 +1,11 @@
-#![allow(dead_code)]
-
-use core::ops::Index;
+#![cfg_attr(not(test), allow(dead_code))]
 
 use no_std_strings::str32;
+use smart_leds::RGB8;
 
-#[derive(Default)]
+type Painter = fn(&mut [RGB8], u8, u8, RGB8) -> bool;
+
+#[derive(Default, Copy, Clone)]
 pub struct Figure {
     pub data: u16,
     pub wh: u8,
@@ -15,14 +16,17 @@ impl Figure {
         let mut data = 0;
         let mut width = 0;
         let mut height = 0;
+        let mut cursor = 1;
         for (idx, line) in figure.lines().enumerate() {
             if idx == 0 {
                 width = line.len() as u8;
             }
             height += 1;
             for ch in line.chars() {
-                data |= if ch == '#' { 1 } else { 0 };
-                data <<= 1;
+                if ch == '#' {
+                    data |= cursor;
+                }
+                cursor <<= 1;
             }
         }
         Self {
@@ -43,60 +47,138 @@ impl Figure {
         self.height() * self.width()
     }
 
+    pub fn rotate(&self) -> Self {
+        let mut rotated: u16 = 0;
+        let height = self.height();
+        let width = self.width();
+
+        let mut data: u16 = self.data;
+        let mut row = 0;
+        let mut ch = height - 1;
+        while data != 0 {
+            let new_ch_idx = row * height + ch;
+            if data & 1 == 1 {
+                rotated |= 1 << new_ch_idx;
+            }
+            row += 1;
+            if row == width {
+                row = 0;
+                ch = ch.saturating_sub(1);
+            }
+            data >>= 1;
+        }
+
+        Self {
+            data: rotated,
+            wh: height << 4 | width, // flip
+        }
+    }
+
     pub fn str(&self) -> str32 {
         let mut repr = str32::new();
-        let mut cursor: u16 = 1 << self.len();
-        while cursor != 0 {
+        let mut cursor: u16 = 1;
+
+        let mut ch_idx = 0;
+        let signs = self.width() * self.height();
+        while cursor.trailing_zeros() as u8 != signs {
             let ch = if self.data & cursor != 0 { "#" } else { " " };
             repr.push(ch);
-            let row_size = ((self.len() - cursor.trailing_zeros() as u8) % self.width()) + 1;
-            if row_size == self.width() {
+
+            ch_idx += 1;
+            if ch_idx == self.width() {
                 repr.push("\n");
+                ch_idx = 0;
             }
-            cursor >>= 1;
+            cursor <<= 1;
         }
         repr
+    }
+
+    pub fn draw(&self, m: &mut [RGB8], x: u8, y: u8, color: RGB8, paniter: Painter) -> bool {
+        let mut row: u8 = 0;
+        let mut col: u8 = 0;
+        let mut cursor: u16 = 1;
+        let signs = self.width() * self.height();
+        while cursor.trailing_zeros() as u8 != signs {
+            if self.data & cursor != 0 && !paniter(m, x + col, y + row, color) {
+                return false;
+            }
+            col += 1;
+            if col == self.width() {
+                row += 1;
+                col = 0;
+            }
+            cursor <<= 1;
+        }
+        true
     }
 }
 
 #[derive(Default)]
 pub struct Digits([Figure; 10]);
 
-impl Digits{
+impl Digits {
     pub const fn new(data: [Figure; 10]) -> Self {
         Digits(data)
     }
 
-    pub fn wrapping_at(&self, idx: u8) -> &Figure {
+    pub fn wrapping_at(&self, idx: u8) -> Figure {
         let idx: usize = idx as usize % self.0.len();
-        &self.0[idx]
-    }
-}
-
-impl Index<usize> for Digits {
-    type Output = Figure;
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
+        self.0[idx]
     }
 }
 
 #[derive(Default)]
 pub struct Tetramino([Figure; 7]);
 
-impl Index<usize> for Tetramino {
-    type Output = Figure;
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.0[index]
-    }
-}
-
 impl Tetramino {
     pub const fn new(data: [Figure; 7]) -> Self {
         Tetramino(data)
     }
 
-    pub fn wrapping_at(&self, idx: u8) -> &Figure {
+    pub fn wrapping_at(&self, idx: u8) -> Figure {
         let idx: usize = idx as usize % self.0.len();
-        &self.0[idx]
+        self.0[idx]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const FOUR: &str = r#"
+# #
+# #
+###
+  #
+  #
+"#;
+
+    const ROTATED_FOUR: &str = r#"
+  ###
+  #  
+#####
+"#;
+
+    #[test]
+    fn parse() {
+        let text = FOUR.trim_start_matches('\n');
+        let f = Figure::from_str(text.trim());
+        assert_eq!(f.str(), text);
+    }
+
+    #[test]
+    fn rotated() {
+        let text = ROTATED_FOUR.trim_start_matches('\n');
+        let f = Figure::from_str(FOUR.trim());
+        let rotated = f.rotate();
+        assert_eq!(
+            rotated.str(),
+            text,
+            "'\n{}'\n!='\n{}'\n",
+            rotated.str(),
+            text
+        );
+    }
+}
+#[cfg(test)]
+fn main() {}
