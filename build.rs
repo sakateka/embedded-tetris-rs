@@ -78,12 +78,22 @@ fn main() {
         ),
     };
 
-    let mut code = quote!{ const DIGITS: Digits = Digits::new([ #digits ]); }.to_string();
+    let mut code = quote! { const DIGITS: Digits = Digits::new([ #digits ]); }.to_string();
 
     code.push_str(
-        quote!{ const TETRAMINO: Tetramino = Tetramino::new([ #tetramino ]); }
+        quote! { const TETRAMINO: Tetramino = Tetramino::new([ #tetramino ]); }
             .to_string()
             .as_str(),
+    );
+    code.push_str(
+        quote! {
+            const HLINE: Figure = Figure {
+                data: 0xff,
+                wh: 8 << 4 | 1,
+            };
+        }
+        .to_string()
+        .as_str(),
     );
 
     let file = syn::parse_file(&code).unwrap();

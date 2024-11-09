@@ -1,12 +1,11 @@
-#![cfg_attr(not(test), no_main)] 
+#![cfg_attr(not(test), no_main)]
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(test, allow(dead_code))]
 #![cfg_attr(test, allow(unused))]
 
 mod figure;
 
-use core::ops::Index;
-
+use nrf52833_hal::gpio::Level;
 #[cfg(not(test))]
 use nrf52833_hal::Rng;
 use smart_leds::{colors, RGB8};
@@ -15,77 +14,38 @@ use ws2812_nrf52833_pwm::Ws2812;
 
 #[cfg(not(test))]
 use cortex_m_rt::entry;
-use embedded_hal::delay::DelayNs;
-use microbit::{board::Board, hal::Timer};
+use embedded_hal::{delay::DelayNs, digital::{InputPin, StatefulOutputPin}};
+use microbit::{board::Board, hal::Timer, pac::p0::dir::PIN8_R};
 #[cfg(not(test))]
 use rtt_target::{rprintln, rtt_init_print};
 
 #[cfg(not(test))]
 use panic_halt as _;
 
-use figure::{Figure, Digits, Tetramino};
+use figure::{Digits, Figure, Tetramino};
 
 const SCREEN_WIDTH: usize = 8;
 const SCREEN_HEIGHT: usize = 32;
 
-#[derive(Copy, Clone, Debug)]
-enum ColorIdx {
-    Brick,
-    Red,
-    Green,
-    Blue,
-    Pink,
-    Yellow,
-    ColorArraySize,
-}
-const C_IDX_BRICK: usize = ColorIdx::Brick as usize;
-const C_IDX_RED: usize = ColorIdx::Red as usize;
-const C_IDX_GREEN: usize = ColorIdx::Green as usize;
-const C_IDX_BLUE: usize = ColorIdx::Blue as usize;
-const C_IDX_PINK: usize = ColorIdx::Pink as usize;
-const C_IDX_YELLOW: usize = ColorIdx::Yellow as usize;
+const BRICK: RGB8 = RGB8::new(12, 2, 0);
+const RED: RGB8 = RGB8::new(6, 0, 0);
+const GREEN: RGB8 = RGB8::new(0, 6, 0);
+const BLUE: RGB8 = RGB8::new(0, 0, 6);
+const PINK: RGB8 = RGB8::new(3, 0, 3);
+const YELLOW: RGB8 = RGB8::new(6, 6, 0);
 
-impl From<usize> for ColorIdx {
-    fn from(value: usize) -> Self {
-        match value {
-            C_IDX_BRICK => ColorIdx::Brick,
-            C_IDX_RED => ColorIdx::Red,
-            C_IDX_GREEN => ColorIdx::Green,
-            C_IDX_BLUE => ColorIdx::Blue,
-            C_IDX_PINK => ColorIdx::Pink,
-            C_IDX_YELLOW => ColorIdx::Yellow,
-            _ => panic!("out of range {}", value),
-        }
-    }
-}
-
-type ColorsType = [RGB8; ColorIdx::ColorArraySize as usize];
-
-const COLORS: ColorsType = [
-    RGB8::new(12, 2, 0),
-    RGB8::new(6, 0, 0),
-    RGB8::new(0, 6, 0),
-    RGB8::new(0, 0, 6),
-    RGB8::new(3, 0, 3),
-    RGB8::new(6, 6, 0),
-];
-
-impl Index<ColorIdx> for ColorsType {
-    type Output = RGB8;
-    fn index(&self, index: ColorIdx) -> &Self::Output {
-        &self[index as usize]
-    }
-}
+type ColorsType = [RGB8; 6];
+const COLORS: ColorsType = [BRICK, RED, GREEN, BLUE, PINK, YELLOW];
 
 trait ColorsIndexer<'a> {
-    fn at(&self, idx: usize) -> RGB8;
-
+    fn at(&self, idx: u8) -> RGB8;
 }
 
 impl<'a> ColorsIndexer<'a> for ColorsType {
-    fn at(&self, idx: usize) -> RGB8 {
-        if idx >= self.len() {
-            return colors::RED; // bright RED indicates an error
+    fn at(&self, idx: u8) -> RGB8 {
+        let mut idx = idx as usize;
+        while idx >= self.len() {
+            idx -= self.len();
         }
         self[idx]
     }
@@ -107,9 +67,18 @@ fn clear(m: &mut [RGB8]) {
     });
 }
 
+fn draw_score(m: &mut [RGB8], score: u8) {
+    let speed = score / 10;
+    let score = DIGITS.wrapping_at(score);
+    let speed = DIGITS.wrapping_at(speed);
+    speed.draw(m, 0, 0, GREEN, dot);
+    score.draw(m, 4, 0, GREEN, dot);
+}
+
+
 include!(concat!(env!("OUT_DIR"), "/figures.rs"));
 
-#[cfg(not(test))]
+// #[cfg(not(test))]
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
@@ -117,35 +86,53 @@ fn main() -> ! {
     let board = Board::take().unwrap();
     let mut timer = Timer::new(board.TIMER0);
     let pin = board.edge.e16.degrade();
+    let mut push = board.edge.e08.into_pulldown_input();
     let mut ws2812: Ws2812<{ 256 * 24 }, _> = Ws2812::new(board.PWM0, pin);
     let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
     let mut r = Rng::new(board.RNG);
-    rprintln!("created figure(1):\n{}", DIGITS.wrapping_at(1).str());
 
-    let x = 3;
-    let mut y = 4;
+    let mut score = 0;
+    let mut rotate = false;
+
+    let mut x = 3;
+    let mut y = 6;
+    let mut pass = 0;
+
+    let mut digit_idx: u8 = 0;
+    let mut digit = DIGITS.wrapping_at(digit_idx);
+    let mut color = COLORS.at(r.random_u8());
 
     rprintln!("starting loop");
-    let mut digit_idx: u8 = 0;
     loop {
-        let color = COLORS.at(r.random_u8() as usize % COLORS.len());
+        rotate = rotate || push.is_high().unwrap();
+
+        if pass >= 10 {
+            pass = 0;
+            y += 1;
+            color = COLORS.at(r.random_u8());
+        }
+
         clear(&mut leds);
-        rprintln!("draw at x={} y={} color={:?}", x, y, color);
-        digit_idx += 1;
-        let mut digit = DIGITS.wrapping_at(digit_idx);
-        if digit_idx & 1 == 1 {
-           digit = digit.rotate();
+        draw_score(&mut leds, score);
+        HLINE.draw(&mut leds, 0, 5, PINK, dot);
+
+        if rotate {
+            digit = digit.rotate();
+            rotate = false;
         }
 
         _ = digit.draw(&mut leds, x, y, color, dot);
         ws2812.write(leds).unwrap();
-        rprintln!("sleep");
-        timer.delay_ms(1000);
-        y += 1;
-        if (y + digit.height()) as usize  > SCREEN_HEIGHT {
-            y = 0;
+        if (y + digit.height()) as usize >= SCREEN_HEIGHT {
+            digit_idx += 1;
+            digit = DIGITS.wrapping_at(digit_idx);
+            y = 6;
+            score += 1;
         }
+
+        pass += 1;
+        timer.delay_ms(50);
     }
 }
 
