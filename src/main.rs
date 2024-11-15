@@ -5,7 +5,6 @@
 
 mod figure;
 
-use nrf52833_hal::gpio::Level;
 #[cfg(not(test))]
 use nrf52833_hal::Rng;
 use smart_leds::{colors, RGB8};
@@ -14,8 +13,8 @@ use ws2812_nrf52833_pwm::Ws2812;
 
 #[cfg(not(test))]
 use cortex_m_rt::entry;
-use embedded_hal::{delay::DelayNs, digital::{InputPin, StatefulOutputPin}};
-use microbit::{board::Board, hal::Timer, pac::p0::dir::PIN8_R};
+use embedded_hal::{delay::DelayNs, digital::InputPin};
+use microbit::{board::Board, hal::Timer};
 #[cfg(not(test))]
 use rtt_target::{rprintln, rtt_init_print};
 
@@ -75,7 +74,6 @@ fn draw_score(m: &mut [RGB8], score: u8) {
     score.draw(m, 4, 0, GREEN, dot);
 }
 
-
 include!(concat!(env!("OUT_DIR"), "/figures.rs"));
 
 // #[cfg(not(test))]
@@ -86,7 +84,7 @@ fn main() -> ! {
     let board = Board::take().unwrap();
     let mut timer = Timer::new(board.TIMER0);
     let pin = board.edge.e16.degrade();
-    let mut push = board.edge.e08.into_pulldown_input();
+    let mut push = board.edge.e08.into_pullup_input();
     let mut ws2812: Ws2812<{ 256 * 24 }, _> = Ws2812::new(board.PWM0, pin);
     let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
