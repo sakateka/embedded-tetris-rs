@@ -3,8 +3,10 @@
 #![cfg_attr(test, allow(dead_code))]
 #![cfg_attr(test, allow(unused))]
 
+mod control;
 mod figure;
 
+use control::{button_was_pressed, init_button};
 #[cfg(not(test))]
 use nrf52833_hal::Rng;
 use smart_leds::{colors, RGB8};
@@ -13,13 +15,14 @@ use ws2812_nrf52833_pwm::Ws2812;
 
 #[cfg(not(test))]
 use cortex_m_rt::entry;
-use embedded_hal::{delay::DelayNs, digital::InputPin};
+use embedded_hal::delay::DelayNs;
 use microbit::{board::Board, hal::Timer};
 #[cfg(not(test))]
 use rtt_target::{rprintln, rtt_init_print};
 
 #[cfg(not(test))]
-use panic_halt as _;
+use panic_rtt_target as _;
+// use panic_halt as _;
 
 use figure::{Digits, Figure, Tetramino};
 
@@ -36,11 +39,11 @@ const YELLOW: RGB8 = RGB8::new(6, 6, 0);
 type ColorsType = [RGB8; 6];
 const COLORS: ColorsType = [BRICK, RED, GREEN, BLUE, PINK, YELLOW];
 
-trait ColorsIndexer<'a> {
+trait ColorsIndexer {
     fn at(&self, idx: u8) -> RGB8;
 }
 
-impl<'a> ColorsIndexer<'a> for ColorsType {
+impl ColorsIndexer for ColorsType {
     fn at(&self, idx: u8) -> RGB8 {
         let mut idx = idx as usize;
         while idx >= self.len() {
@@ -82,18 +85,18 @@ fn main() -> ! {
     rtt_init_print!();
     rprintln!("message from build.rs:\n{}", DIGITS.wrapping_at(8).str());
     let board = Board::take().unwrap();
-    let mut timer = Timer::new(board.TIMER0);
     let pin = board.edge.e16.degrade();
-    let mut push = board.edge.e08.into_pullup_input();
+    init_button(board.GPIOTE, board.edge.e08.into_floating_input().into());
+
+    let mut timer = Timer::new(board.TIMER0);
+
     let mut ws2812: Ws2812<{ 256 * 24 }, _> = Ws2812::new(board.PWM0, pin);
     let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
     let mut r = Rng::new(board.RNG);
 
     let mut score = 0;
-    let mut rotate = false;
-
-    let mut x = 3;
+    let x = 3;
     let mut y = 6;
     let mut pass = 0;
 
@@ -103,8 +106,6 @@ fn main() -> ! {
 
     rprintln!("starting loop");
     loop {
-        rotate = rotate || push.is_high().unwrap();
-
         if pass >= 10 {
             pass = 0;
             y += 1;
@@ -115,9 +116,8 @@ fn main() -> ! {
         draw_score(&mut leds, score);
         HLINE.draw(&mut leds, 0, 5, PINK, dot);
 
-        if rotate {
+        if button_was_pressed(true) {
             digit = digit.rotate();
-            rotate = false;
         }
 
         _ = digit.draw(&mut leds, x, y, color, dot);
