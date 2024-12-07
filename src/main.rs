@@ -9,6 +9,7 @@ mod figure;
 use control::{button_was_pressed, init_button};
 #[cfg(not(test))]
 use nrf52833_hal::Rng;
+use nrf52833_hal::{saadc::SaadcConfig, Saadc};
 use smart_leds::{colors, RGB8};
 use smart_leds_trait::SmartLedsWrite;
 use ws2812_nrf52833_pwm::Ws2812;
@@ -16,7 +17,7 @@ use ws2812_nrf52833_pwm::Ws2812;
 #[cfg(not(test))]
 use cortex_m_rt::entry;
 use embedded_hal::delay::DelayNs;
-use microbit::{board::Board, hal::Timer};
+use microbit::{adc::Adc, board::Board, hal::Timer};
 #[cfg(not(test))]
 use rtt_target::{rprintln, rtt_init_print};
 
@@ -79,6 +80,27 @@ fn draw_score(m: &mut [RGB8], score: u8) {
 
 include!(concat!(env!("OUT_DIR"), "/figures.rs"));
 
+
+fn move_x(val: Result<i16, ()>, x: &mut u8, width: u8) {
+    if let Ok(v) = val {
+        match v {
+            0..300 if SCREEN_WIDTH as u8 > *x + width => *x += 1,
+            16000..16384 if *x > 0 =>  *x -= 1,
+            _ => {},
+        }
+        rprintln!("val: {}", v);
+    }
+}
+
+fn move_y(val: Result<i16, ()>, y: &mut u8, height: u8) {
+    if let Ok(v) = val {
+        match v {
+            16000..16384 if SCREEN_HEIGHT as u8 > *y + height =>  *y += 1,
+            _ => {},
+        }
+    }
+}
+
 // #[cfg(not(test))]
 #[entry]
 fn main() -> ! {
@@ -88,6 +110,10 @@ fn main() -> ! {
     let pin = board.edge.e16.degrade();
     init_button(board.GPIOTE, board.edge.e08.into_floating_input().into());
 
+    let mut adc: Saadc =  Saadc::new(board.ADC, SaadcConfig::default());
+    let mut left_right = board.edge.e01.into_floating_input();
+    let mut up_down = board.edge.e02.into_floating_input();
+
     let mut timer = Timer::new(board.TIMER0);
 
     let mut ws2812: Ws2812<{ 256 * 24 }, _> = Ws2812::new(board.PWM0, pin);
@@ -96,7 +122,7 @@ fn main() -> ! {
     let mut r = Rng::new(board.RNG);
 
     let mut score = 0;
-    let x = 3;
+    let mut x = 3;
     let mut y = 6;
     let mut pass = 0;
 
@@ -111,6 +137,9 @@ fn main() -> ! {
             y += 1;
             color = COLORS.at(r.random_u8());
         }
+
+        move_x(adc.read_channel(&mut left_right), &mut x, digit.width());
+        move_y(adc.read_channel(&mut up_down), &mut y, digit.height());
 
         clear(&mut leds);
         draw_score(&mut leds, score);
