@@ -80,25 +80,21 @@ fn draw_score(m: &mut [RGB8], score: u8) {
 
 include!(concat!(env!("OUT_DIR"), "/figures.rs"));
 
-
-fn move_x(val: Result<i16, ()>, x: &mut u8, width: u8) {
-    if let Ok(v) = val {
-        match v {
-            0..300 if SCREEN_WIDTH as u8 > *x + width => *x += 1,
-            16000..16384 if *x > 0 =>  *x -= 1,
-            _ => {},
-        }
-        rprintln!("val: {}", v);
+fn move_x(v: i16, x: &mut u8, width: u8) -> Result<(), ()> {
+    match v {
+        0..300 if SCREEN_WIDTH as u8 > *x + width => *x += 1,
+        16000..16384 if *x > 0 => *x -= 1,
+        _ => {}
     }
+    Ok(())
 }
 
-fn move_y(val: Result<i16, ()>, y: &mut u8, height: u8) {
-    if let Ok(v) = val {
-        match v {
-            16000..16384 if SCREEN_HEIGHT as u8 > *y + height =>  *y += 1,
-            _ => {},
-        }
+fn move_y(v: i16, y: &mut u8, height: u8) -> Result<(), ()> {
+    match v {
+        16000..16384 if SCREEN_HEIGHT as u8 > *y + height => *y += 1,
+        _ => {}
     }
+    Ok(())
 }
 
 // #[cfg(not(test))]
@@ -110,7 +106,7 @@ fn main() -> ! {
     let pin = board.edge.e16.degrade();
     init_button(board.GPIOTE, board.edge.e08.into_floating_input().into());
 
-    let mut adc: Saadc =  Saadc::new(board.ADC, SaadcConfig::default());
+    let mut adc: Saadc = Saadc::new(board.ADC, SaadcConfig::default());
     let mut left_right = board.edge.e01.into_floating_input();
     let mut up_down = board.edge.e02.into_floating_input();
 
@@ -138,8 +134,12 @@ fn main() -> ! {
             color = COLORS.at(r.random_u8());
         }
 
-        move_x(adc.read_channel(&mut left_right), &mut x, digit.width());
-        move_y(adc.read_channel(&mut up_down), &mut y, digit.height());
+        _ = adc
+            .read_channel(&mut left_right)
+            .and_then(|v| move_x(v, &mut x, digit.width()));
+        _ = adc
+            .read_channel(&mut up_down)
+            .and_then(|v| move_y(v, &mut y, digit.height()));
 
         clear(&mut leds);
         draw_score(&mut leds, score);
