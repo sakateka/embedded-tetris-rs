@@ -3,7 +3,7 @@ use core::cell::RefCell;
 use cortex_m::interrupt::{free as interrupt_free, Mutex};
 use microbit::{
     hal::{
-        gpio::{Input, Floating, Pin},
+        gpio::{Floating, Input, Pin},
         gpiote::Gpiote,
     },
     pac::{self, interrupt},
@@ -13,7 +13,6 @@ use rtt_target::rprint;
 pub static GPIO: Mutex<RefCell<Option<Gpiote>>> = Mutex::new(RefCell::new(None));
 pub static PUSH: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false));
 pub static TICK: Mutex<RefCell<u32>> = Mutex::new(RefCell::new(0));
-
 
 #[pac::interrupt]
 fn GPIOTE() {
@@ -38,10 +37,7 @@ fn GPIOTE() {
 pub fn init_button(board_gpiote: pac::GPIOTE, pin: Pin<Input<Floating>>) {
     let gpiote = Gpiote::new(board_gpiote);
     let channel = gpiote.channel0();
-    channel
-        .input_pin(&pin)
-        .hi_to_lo()
-        .enable_interrupt();
+    channel.input_pin(&pin).hi_to_lo().enable_interrupt();
     channel.reset_events();
     interrupt_free(move |cs| {
         *GPIO.borrow(cs).borrow_mut() = Some(gpiote);

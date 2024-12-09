@@ -17,7 +17,7 @@ use ws2812_nrf52833_pwm::Ws2812;
 #[cfg(not(test))]
 use cortex_m_rt::entry;
 use embedded_hal::delay::DelayNs;
-use microbit::{adc::Adc, board::Board, hal::Timer};
+use microbit::{board::Board, hal::Timer};
 #[cfg(not(test))]
 use rtt_target::{rprintln, rtt_init_print};
 
@@ -52,6 +52,12 @@ impl ColorsIndexer for ColorsType {
         }
         self[idx]
     }
+}
+
+fn can_draw(m: &mut [RGB8], x: u8, y: u8, color: RGB8) -> bool {
+    x < SCREEN_WIDTH as u8
+        && y < SCREEN_HEIGHT as u8
+        && m[SCREEN_WIDTH * y as usize + x as usize] == color
 }
 
 fn dot(m: &mut [RGB8], x: u8, y: u8, color: RGB8) -> bool {
@@ -117,21 +123,27 @@ fn main() -> ! {
 
     let mut r = Rng::new(board.RNG);
 
+    let init_x = 3;
+    let init_y = 6;
+    let next_visible_y = init_y + 5;
+
+    let mut x = init_x;
+    let mut y = init_y;
     let mut score = 0;
-    let mut x = 3;
-    let mut y = 6;
     let mut pass = 0;
 
     let mut digit_idx: u8 = 0;
     let mut digit = DIGITS.wrapping_at(digit_idx);
+    digit_idx += 1;
+    let mut next_digit = DIGITS.wrapping_at(digit_idx);
     let mut color = COLORS.at(r.random_u8());
+    let mut next_color = COLORS.at(r.random_u8());
 
     rprintln!("starting loop");
     loop {
         if pass >= 10 {
             pass = 0;
             y += 1;
-            color = COLORS.at(r.random_u8());
         }
 
         _ = adc
@@ -146,15 +158,35 @@ fn main() -> ! {
         HLINE.draw(&mut leds, 0, 5, PINK, dot);
 
         if button_was_pressed(true) {
-            digit = digit.rotate();
+            let rotated = digit.rotate();
+            let shift = if rotated.width() > rotated.height()
+                && (x + rotated.width()) > SCREEN_WIDTH as u8
+            {
+                (x + rotated.width()) - SCREEN_WIDTH as u8
+            } else {
+                0
+            };
+            if rotated.draw(&mut leds, x - shift, y, colors::BLACK, can_draw) {
+                digit = rotated;
+                x -= shift;
+            }
+        }
+        if y > next_visible_y {
+            _ = next_digit.draw(&mut leds, init_x, init_y, next_color, dot);
         }
 
         _ = digit.draw(&mut leds, x, y, color, dot);
         ws2812.write(leds).unwrap();
         if (y + digit.height()) as usize >= SCREEN_HEIGHT {
+            digit = next_digit;
             digit_idx += 1;
-            digit = DIGITS.wrapping_at(digit_idx);
-            y = 6;
+            next_digit = DIGITS.wrapping_at(digit_idx);
+
+            color = next_color;
+            next_color = COLORS.at(r.random_u8());
+
+            x = init_x;
+            y = init_y + 1;
             score += 1;
         }
 
