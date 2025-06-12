@@ -1,60 +1,38 @@
-use core::cell::RefCell;
+use embassy_rp::gpio::{Input, Pull};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::signal::Signal;
 
-use cortex_m::interrupt::{free as interrupt_free, Mutex};
-use microbit::{
-    hal::{
-        gpio::{Floating, Input, Pin},
-        gpiote::Gpiote,
-    },
-    pac::{self, interrupt},
-};
-use rtt_target::rprint;
+static BUTTON_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+static BUTTON_STATE: Mutex<CriticalSectionRawMutex, bool> = Mutex::new(false);
 
-pub static GPIO: Mutex<RefCell<Option<Gpiote>>> = Mutex::new(RefCell::new(None));
-pub static PUSH: Mutex<RefCell<bool>> = Mutex::new(RefCell::new(false));
-pub static TICK: Mutex<RefCell<u32>> = Mutex::new(RefCell::new(0));
+pub struct ButtonController {
+    button: Input<'static>,
+}
 
-#[pac::interrupt]
-fn GPIOTE() {
-    static mut LAST_TICK: u32 = 0;
+impl ButtonController {
+    pub fn new(button: Input<'static>) -> Self {
+        Self { button }
+    }
 
-    interrupt_free(|cs| {
-        if let Some(gpiote) = GPIO.borrow(cs).borrow().as_ref() {
-            let curr_tick = *TICK.borrow(cs).borrow();
-            if curr_tick - *LAST_TICK > 2 {
-                rprint!("chnage {} {}\n", curr_tick, *LAST_TICK);
-                let push = gpiote.channel0().is_event_triggered();
-                *PUSH.borrow(cs).borrow_mut() = push;
-            } else {
-                rprint!("skip {} {}\n", curr_tick, *LAST_TICK);
+    pub async fn run(&mut self) -> ! {
+        let mut last_state = false;
+        loop {
+            let current_state = self.button.is_low();
+            if current_state && !last_state {
+                // Button pressed (falling edge)
+                BUTTON_SIGNAL.signal(true);
             }
-            *LAST_TICK = curr_tick;
-            gpiote.channel0().reset_events();
+            last_state = current_state;
+            embassy_time::Timer::after_millis(10).await;
         }
-    });
+    }
 }
 
-pub fn init_button(board_gpiote: pac::GPIOTE, pin: Pin<Input<Floating>>) {
-    let gpiote = Gpiote::new(board_gpiote);
-    let channel = gpiote.channel0();
-    channel.input_pin(&pin).hi_to_lo().enable_interrupt();
-    channel.reset_events();
-    interrupt_free(move |cs| {
-        *GPIO.borrow(cs).borrow_mut() = Some(gpiote);
-        unsafe {
-            pac::NVIC::unmask(pac::Interrupt::GPIOTE);
-        }
-        pac::NVIC::unpend(pac::Interrupt::GPIOTE);
-    });
+pub async fn wait_for_button_press() -> bool {
+    BUTTON_SIGNAL.wait().await
 }
 
-pub fn button_was_pressed(reset: bool) -> bool {
-    interrupt_free(|cs| {
-        let push = *PUSH.borrow(cs).borrow();
-        if reset {
-            *PUSH.borrow(cs).borrow_mut() = false;
-        }
-        *TICK.borrow(cs).borrow_mut() += 1;
-        push
-    })
+pub fn button_was_pressed() -> bool {
+    BUTTON_SIGNAL.try_take().unwrap_or(false)
 }

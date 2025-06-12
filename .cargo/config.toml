@@ -1,5 +1,8 @@
-[build]
-target = "thumbv7em-none-eabihf"
-
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-rustflags = ["-C", "link-arg=-Tlink.x"]
+runner = "probe-rs run --chip RP2040"
+
+[build]
+target = "thumbv6m-none-eabi"        # Cortex-M0 and Cortex-M0+
+
+[env]
+DEFMT_LOG = "debug"

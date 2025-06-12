@@ -94,6 +94,15 @@ impl Figure {
         repr
     }
 
+    pub fn get_bit(&self, col: u8, row: u8) -> bool {
+        if col >= self.width() || row >= self.height() {
+            return false;
+        }
+        let bit_idx = row * self.width() + col;
+        let cursor = 1u16 << bit_idx;
+        self.data & cursor != 0
+    }
+
     pub fn draw(&self, m: &mut [RGB8], x: u8, y: u8, color: RGB8, paniter: Painter) -> bool {
         let mut row: u8 = 0;
         let mut col: u8 = 0;
