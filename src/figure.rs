@@ -12,29 +12,6 @@ pub struct Figure {
 }
 
 impl Figure {
-    pub fn from_str(figure: &str) -> Self {
-        let mut data = 0;
-        let mut width = 0;
-        let mut height = 0;
-        let mut cursor = 1;
-        for (idx, line) in figure.lines().enumerate() {
-            if idx == 0 {
-                width = line.len() as u8;
-            }
-            height += 1;
-            for ch in line.chars() {
-                if ch == '#' {
-                    data |= cursor;
-                }
-                cursor <<= 1;
-            }
-        }
-        Self {
-            data,
-            wh: width << 4 | height,
-        }
-    }
-
     pub fn width(&self) -> u8 {
         self.wh >> 4
     }
@@ -196,43 +173,10 @@ pub const TETRAMINO: Tetramino = Tetramino::new([
     },
 ]);
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    const FOUR: &str = r#"
-# #
-# #
-###
-  #
-  #
-"#;
-
-    const ROTATED_FOUR: &str = r#"
-  ###
-  #  
-#####
-"#;
-
-    #[test]
-    fn parse() {
-        let text = FOUR.trim_start_matches('\n');
-        let f = Figure::from_str(text.trim());
-        assert_eq!(f.str(), text);
-    }
-
-    #[test]
-    fn rotated() {
-        let text = ROTATED_FOUR.trim_start_matches('\n');
-        let f = Figure::from_str(FOUR.trim());
-        let rotated = f.rotate();
-        assert_eq!(
-            rotated.str(),
-            text,
-            "'\n{}'\n!='\n{}'\n",
-            rotated.str(),
-            text
-        );
-    }
-}
-#[cfg(test)]
-fn main() {}
+//  #
+// ###
+// # #
+pub const TANK: Figure = Figure {
+    data: 0b_010_111_101,
+    wh: 3 << 4 | 3,
+};
