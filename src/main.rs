@@ -14,15 +14,31 @@ use smart_leds::{colors, RGB8};
 use {defmt_rtt as _, panic_probe as _};
 
 mod control;
+mod digits;
 mod figure;
 
 use control::{button_was_pressed, ButtonController};
-use figure::{Digits, Figure, Tetramino};
+use digits::DIGITS;
+use figure::{Figure, Tetramino, TETRAMINO};
 
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => InterruptHandler<PIO0>;
     ADC_IRQ_FIFO => AdcInterruptHandler;
 });
+
+//  Coordinates
+//        x
+//     0 --->  7
+//    0+-------+
+//     |       |
+//     |   S   |
+//   | |   C   |
+// y | |   R   |---+
+//   | |   E   | +----+
+//   v |   E   | |::::| <- microbit
+//     |   N   | +----+
+//     |       | @ |<---- joystick
+//   31+-------+---+
 
 const SCREEN_WIDTH: usize = 8;
 const SCREEN_HEIGHT: usize = 32;
@@ -332,70 +348,17 @@ impl<'a> Joystick<'a> {
     }
 }
 
-include!(concat!(env!("OUT_DIR"), "/figures.rs"));
-
-// Game title graphics (converted from Python GAMES array)
-// const TETRIS_TITLE: [u32; 8] = [
-//     0o_00000000000000000000000000000000,
-//     0o_00000000000000000000000000000000,
-//     0o_03330033300333003330030030033300,
-//     0o_00300030000030003030030030030000,
-//     0o_00300033300030003330030330030000,
-//     0o_00300030000030003000033030030000,
-//     0o_00300033300030003000030030033300,
-//     0o_00000000000000000000000000000000,
-// ];
-
-// const RACES_TITLE: [u32; 8] = [
-//     0o_00000000000000000000000000000000,
-//     0o_00000000000000000000000000000000,
-//     0o_00003330033300303003030030030000,
-//     0o_00003000030300303003300030030000,
-//     0o_00003000030300333003300030330000,
-//     0o_00003000030300303003030033030000,
-//     0o_00003000033300303003030030030000,
-//     0o_00000000000000000000000000000000,
-// ];
-
-// const TANKS_TITLE: [u32; 8] = [
-//     0o_00000000000000000000000000000000,
-//     0o_00000000000000000000000000000000,
-//     0o_00003330003000303003030030030000,
-//     0o_00000300030300303003300030030000,
-//     0o_00000300033300333003300030330000,
-//     0o_00000300030300303003030033030000,
-//     0o_00000300030300303003030030030000,
-//     0o_00000000000000000000000000000000,
-// ];
-
-// const SNAKE_TITLE: [u32; 8] = [
-//     0o_00000000000000000000000000000000,
-//     0o_00000000000000000030000000000000,
-//     0o_03300330330333003000303003003300,
-//     0o_00030303030300003003303030030030,
-//     0o_03300300030333003030303300033330,
-//     0o_00030300030300003300303030030030,
-//     0o_03300300030333003000303003030030,
-//     0o_00000000000000000000000000000000,
-// ];
-
-// // Game titles array
-// const GAME_TITLES: [&[u32; 8]; 4] = [
-//     &TETRIS_TITLE,
-//     &RACES_TITLE,
-//     &TANKS_TITLE,
-//     &SNAKE_TITLE,
-// ];
-
 // Function to create FrameBuffer from title rows (like Python's from_rows)
-fn framebuffer_from_rows(rows: &[u32; 8]) -> FrameBuffer {
+fn framebuffer_from_rows(rows: &[u32; 8], color: u8) -> FrameBuffer {
     let mut buffer = FrameBuffer::new();
 
     for y in 0..SCREEN_HEIGHT {
         for x in 0..rows.len() {
             if x < SCREEN_WIDTH {
-                let color = (rows[x] >> ((SCREEN_HEIGHT - y - 1) * 3)) & 0b111;
-                buffer.set(SCREEN_WIDTH - x - 1, y, color as u8);
+                let bit = rows[x] >> (SCREEN_HEIGHT - y - 1) & 1;
+                if bit == 1 {
+                    buffer.set(SCREEN_WIDTH - x - 1, y, color);
+                }
             }
         }
     }
@@ -482,6 +445,19 @@ impl TetrisGame {
         }
     }
 
+    fn get_tetramino_color(&self, tetramino_idx: u8) -> u8 {
+        match tetramino_idx {
+            0 => LIGHT_BLUE_IDX, // I piece
+            1 => YELLOW_IDX,     // O piece
+            2 => PINK_IDX,       // T piece
+            3 => GREEN_IDX,      // S piece
+            4 => RED_IDX,        // Z piece
+            5 => BLUE_IDX,       // J piece
+            6 => BRICK_IDX,      // L piece
+            _ => RED_IDX,        // Default
+        }
+    }
+
     fn draw_score(&mut self) {
         self.score %= 100;
         let speed = self.score / 10;
@@ -491,7 +467,7 @@ impl TetrisGame {
         let score_fig = DIGITS.wrapping_at(score_digit);
 
         self.screen.draw_figure(0, 0, &speed_fig, GREEN_IDX);
-        self.screen.draw_figure(4, 0, &score_fig, GREEN_IDX);
+        self.screen.draw_figure(5, 0, &score_fig, GREEN_IDX);
 
         // Draw horizontal line
         for x in 0..SCREEN_WIDTH {
@@ -499,84 +475,113 @@ impl TetrisGame {
         }
     }
 
-    fn reduce_concrete(&mut self) -> u8 {
-        let mut score = 0;
+    fn reduce_concrete(&mut self) -> ([usize; 4], usize) {
+        let mut cleared_rows = [0; 4];
+        let mut count = 0;
+
         for row in (6..SCREEN_HEIGHT).rev() {
             if self.concrete.row_is_full(row) {
-                score += 1;
+                cleared_rows[count] = row;
+                count += 1;
                 self.concrete
                     .clear_range(row * SCREEN_WIDTH, (row + 1) * SCREEN_WIDTH);
             }
         }
-        score
+        (cleared_rows, count)
     }
 
-    fn shift_concrete(&mut self) {
-        let mut to_idx = SCREEN_HEIGHT - 1;
-        let mut from_idx = SCREEN_HEIGHT - 1;
+    async fn animate_concrete_shift(
+        &mut self,
+        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
+        cleared_rows: &[usize],
+        count: usize,
+    ) {
+        let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
-        while from_idx > 5 {
-            if self.concrete.row_is_empty(from_idx) {
-                if from_idx == 0 {
-                    break;
+        // For each cleared row, animate the blocks above it falling down
+        for i in (0..count).rev() {
+            let cleared_row = cleared_rows[i];
+            let mut to_idx = cleared_row;
+            let mut from_idx = cleared_row - 1;
+
+            while from_idx > 5 {
+                if self.concrete.row_is_empty(from_idx) {
+                    if from_idx == 0 {
+                        break;
+                    }
+                    from_idx -= 1;
+                    continue;
                 }
-                from_idx -= 1;
-                continue;
-            }
 
-            if from_idx != to_idx {
                 // Copy row
                 for x in 0..SCREEN_WIDTH {
                     let color = self.concrete.get(x, from_idx);
                     self.concrete.set(x, to_idx, color);
                 }
+
+                // Render and wait for animation
+                self.screen.copy_from(&self.concrete);
+                self.draw_score();
+                self.screen.render(&mut leds);
+                ws2812.write(&leds).await;
+                Timer::after_millis(50).await;
+
+                if from_idx == 0 {
+                    break;
+                }
+                from_idx -= 1;
+                if to_idx == 0 {
+                    break;
+                }
+                to_idx -= 1;
             }
 
-            if from_idx == 0 {
-                break;
-            }
-            from_idx -= 1;
-            if to_idx == 0 {
-                break;
-            }
-            to_idx -= 1;
-        }
-
-        // Clear remaining rows
-        for row in 6..=to_idx {
+            // Clear the row that was just shifted
             for x in 0..SCREEN_WIDTH {
-                self.concrete.set(x, row, BLACK_IDX);
+                self.concrete.set(x, to_idx, BLACK_IDX);
             }
         }
+
+        // Final render
+        self.screen.copy_from(&self.concrete);
+        self.draw_score();
+        self.screen.render(&mut leds);
+        ws2812.write(&leds).await;
     }
 
     async fn game_over(
         &mut self,
         ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
         joystick: &mut Joystick<'_>,
+        last_x: i8,
+        last_y: i8,
+        last_figure: &Figure,
+        last_color: u8,
     ) {
         let mut leds: [RGB8; 256] = [RGB8::default(); 256];
-        let figure = TETRAMINO.wrapping_at(0); // Use first tetramino for game over
 
         loop {
             if joystick.was_pressed() {
                 break;
             }
 
-            for color_idx in 1..COLORS.len() as u8 {
-                self.screen.clear();
-                self.screen
-                    .draw_figure(self.init_x, self.init_y, &figure, color_idx);
-                self.screen.render(&mut leds);
-                ws2812.write(&leds).await;
-                Timer::after_millis(500).await;
+            // Preserve the concrete blocks and score
+            self.screen.copy_from(&self.concrete);
+            self.draw_score();
 
-                self.screen
-                    .draw_figure(self.init_x, self.init_y, &figure, BLACK_IDX);
-                self.screen.render(&mut leds);
-                ws2812.write(&leds).await;
-                Timer::after_millis(500).await;
-            }
+            // Blink the last tetramino
+            self.screen
+                .draw_figure(last_x, last_y - 1, last_figure, last_color);
+            self.screen.render(&mut leds);
+            ws2812.write(&leds).await;
+            Timer::after_millis(500).await;
+
+            // Clear only the last tetramino
+            self.screen
+                .draw_figure(last_x, last_y - 1, last_figure, BLACK_IDX);
+            self.screen.render(&mut leds);
+            ws2812.write(&leds).await;
+            Timer::after_millis(500).await;
         }
     }
 }
@@ -591,8 +596,10 @@ impl Game for TetrisGame {
         let mut y = self.init_y;
         let mut ipass = 0;
 
-        let mut curr = TETRAMINO.wrapping_at(self.prng.next_range(7));
-        let mut next = TETRAMINO.wrapping_at(self.prng.next_range(7));
+        let mut curr_idx = self.prng.next_range(7);
+        let mut next_idx = self.prng.next_range(7);
+        let mut curr = TETRAMINO.wrapping_at(curr_idx);
+        let mut next = TETRAMINO.wrapping_at(next_idx);
         let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
         loop {
@@ -629,33 +636,41 @@ impl Game for TetrisGame {
             self.screen.copy_from(&self.concrete);
             self.draw_score();
 
+            let curr_color = self.get_tetramino_color(curr_idx);
+            let next_color = self.get_tetramino_color(next_idx);
+
             if y > self.next_visible_y {
                 self.screen
-                    .draw_figure(self.init_x, self.init_y, &next, YELLOW_IDX);
+                    .draw_figure(self.init_x, self.init_y, &next, next_color);
             }
 
             if !self.concrete.collides(x, y, &curr) {
-                self.screen.draw_figure(x, y, &curr, RED_IDX);
+                self.screen.draw_figure(x, y, &curr, curr_color);
             } else {
-                self.screen.draw_figure(x, y - 1, &curr, RED_IDX);
-                self.concrete.draw_figure(x, y - 1, &curr, BRICK_IDX);
+                self.screen.draw_figure(x, y - 1, &curr, curr_color);
+                self.concrete.draw_figure(x, y - 1, &curr, curr_color);
 
                 x = self.init_x;
                 y = self.init_y + 1;
 
                 if self.concrete.collides(x, y, &curr) {
-                    self.game_over(ws2812, joystick).await;
+                    self.game_over(ws2812, joystick, x, y, &curr, curr_color)
+                        .await;
                     return;
                 }
 
-                curr = next;
-                next = TETRAMINO.wrapping_at(self.prng.next_range(7));
+                curr_idx = next_idx;
+                next_idx = self.prng.next_range(7);
+                curr = TETRAMINO.wrapping_at(curr_idx);
+                next = TETRAMINO.wrapping_at(next_idx);
 
-                let reduced = self.reduce_concrete();
-                self.score += reduced;
+                let (cleared_rows, count) = self.reduce_concrete();
+                self.score += count as u8;
 
-                if reduced > 0 {
-                    self.shift_concrete();
+                if count > 0 {
+                    // Animate each cleared row separately
+                    self.animate_concrete_shift(ws2812, &cleared_rows, count)
+                        .await;
                 }
             }
 
@@ -684,91 +699,126 @@ struct SnakeGame {
     apple: Dot,
     screen: FrameBuffer,
     prng: Prng,
+    score: u8,
+    base_speed: Duration,
+    current_speed: Duration,
 }
 
 impl SnakeGame {
     fn new() -> Self {
-        let mut body = [Dot::new(0, 0); 32];
-        body[0] = Dot::new(4, 15);
-        body[1] = Dot::new(4, 16);
-        body[2] = Dot::new(4, 17);
-
-        Self {
-            body,
+        let mut prng = Prng::new(0x12345678);
+        let mut game = Self {
+            body: [Dot::new(0, 0); 32],
             body_len: 3,
-            direction: Dot::new(0, 1),
-            apple: Dot::new(5, 5),
+            direction: Dot::new(1, 0),
+            apple: Dot::new(0, 0),
             screen: FrameBuffer::new(),
-            prng: Prng::new(54321),
-        }
+            prng,
+            score: 0,
+            base_speed: Duration::from_millis(200),
+            current_speed: Duration::from_millis(200),
+        };
+
+        // Initialize snake body
+        game.body[0] = Dot::new(3, 15);
+        game.body[1] = Dot::new(2, 15);
+        game.body[2] = Dot::new(1, 15);
+
+        game.respawn_apple();
+        game
     }
 
     fn respawn_apple(&mut self) {
-        // Find empty spot for apple
-        for _ in 0..100 {
-            // Try up to 100 times
+        loop {
             let x = self.prng.next_range(SCREEN_WIDTH as u8) as i8;
             let y = self.prng.next_range(SCREEN_HEIGHT as u8) as i8;
-            let pos = Dot::new(x, y);
+            let new_apple = Dot::new(x, y);
 
-            // Check if position is not occupied by snake
-            let mut occupied = false;
+            // Check if apple spawns on snake body
+            let mut valid = true;
             for i in 0..self.body_len {
-                if self.body[i] == pos {
-                    occupied = true;
+                if self.body[i] == new_apple {
+                    valid = false;
                     break;
                 }
             }
 
-            if !occupied {
-                self.apple = pos;
+            if valid {
+                self.apple = new_apple;
                 break;
             }
         }
     }
 
     fn move_forward(&mut self) -> bool {
-        let head = self.body[self.body_len - 1];
+        let head = self.body[0];
         let new_head = head.move_wrap(self.direction);
 
-        // Check collision with body
+        // Check collision with self
         for i in 0..self.body_len {
             if self.body[i] == new_head {
-                return false; // Collision with self
+                return false;
             }
         }
 
-        // Check if eating apple
-        let eating_apple = new_head == self.apple;
+        // Move body
+        for i in (1..self.body_len).rev() {
+            self.body[i] = self.body[i - 1];
+        }
+        self.body[0] = new_head;
 
-        if eating_apple {
-            // Grow snake
-            if self.body_len < self.body.len() {
-                self.body[self.body_len] = new_head;
+        // Check if apple is eaten
+        if new_head == self.apple {
+            if self.body_len < 32 {
                 self.body_len += 1;
+                self.body[self.body_len - 1] = self.body[self.body_len - 2];
             }
+            self.score += 1;
             self.respawn_apple();
-        } else {
-            // Move snake
-            for i in 0..self.body_len - 1 {
-                self.body[i] = self.body[i + 1];
-            }
-            self.body[self.body_len - 1] = new_head;
         }
 
         true
     }
 
     fn draw_snake(&mut self) {
+        // Clear screen
+        self.screen.clear();
+
+        // Draw snake body
         for i in 0..self.body_len {
-            let color = if i == self.body_len - 1 {
-                LIGHT_GREEN_IDX
-            } else {
-                GREEN_IDX
-            };
-            self.screen
-                .set(self.body[i].x as usize, self.body[i].y as usize, color);
+            let dot = self.body[i];
+            self.screen.set(dot.x as usize, dot.y as usize, GREEN_IDX);
         }
+
+        // Draw apple
+        self.screen
+            .set(self.apple.x as usize, self.apple.y as usize, RED_IDX);
+
+        // Draw score
+        self.draw_score();
+    }
+
+    fn draw_score(&mut self) {
+        let mut score = self.score;
+        let mut x = 0;
+
+        // Handle single digit
+        if score < 10 {
+            let figure = DIGITS.wrapping_at(score);
+            self.screen.draw_figure(x, 0, &figure, YELLOW_IDX);
+            return;
+        }
+
+        // Handle two digits
+        let tens = score / 10;
+        let ones = score % 10;
+
+        let tens_figure = DIGITS.wrapping_at(tens);
+        self.screen.draw_figure(x, 0, &tens_figure, YELLOW_IDX);
+        x += tens_figure.width() as i8;
+
+        let ones_figure = DIGITS.wrapping_at(ones);
+        self.screen.draw_figure(x, 0, &ones_figure, YELLOW_IDX);
     }
 
     async fn game_over(
@@ -776,23 +826,24 @@ impl SnakeGame {
         ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
         joystick: &mut Joystick<'_>,
     ) {
-        let mut leds: [RGB8; 256] = [RGB8::default(); 256];
-        let mut color_idx = 0u8;
+        let mut leds = [RGB8::new(0, 0, 0); 256];
 
-        loop {
-            if joystick.was_pressed() {
-                break;
-            }
-
+        // Flash screen
+        for _ in 0..3 {
             self.screen.clear();
-            self.draw_snake();
-            self.screen
-                .set(self.apple.x as usize, self.apple.y as usize, color_idx);
             self.screen.render(&mut leds);
             ws2812.write(&leds).await;
+            Timer::after(Duration::from_millis(200)).await;
 
-            color_idx = (color_idx + 1) % COLORS.len() as u8;
-            Timer::after_millis(200).await;
+            self.draw_snake();
+            self.screen.render(&mut leds);
+            ws2812.write(&leds).await;
+            Timer::after(Duration::from_millis(200)).await;
+        }
+
+        // Wait for button press
+        while !joystick.was_pressed() {
+            Timer::after(Duration::from_millis(50)).await;
         }
     }
 }
@@ -803,45 +854,50 @@ impl Game for SnakeGame {
         ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
         joystick: &mut Joystick<'_>,
     ) {
-        let mut step = 30;
-        let mut leds: [RGB8; 256] = [RGB8::default(); 256];
+        let mut leds = [RGB8::new(0, 0, 0); 256];
+        let mut ticker = Ticker::every(self.current_speed);
 
         loop {
-            let new_x = joystick.read_x().await;
-            let new_y = joystick.read_y().await;
+            // Handle joystick input
+            let x = joystick.read_x().await;
+            let y = joystick.read_y().await;
 
-            if new_x != 0 && new_y != 0 {
-                // Prioritize one direction
-                let direction = Dot::new(new_x, 0);
-                if !self.direction.is_opposite(&direction) {
-                    self.direction = direction;
+            if x != 0 || y != 0 {
+                // Prioritize horizontal movement over vertical
+                let new_dir = if x != 0 {
+                    Dot::new(x, 0)
+                } else {
+                    Dot::new(0, y)
+                };
+
+                if !new_dir.is_opposite(&self.direction) {
+                    // If pressing same direction as current movement, speed up
+                    if new_dir.x == self.direction.x && new_dir.y == self.direction.y {
+                        self.current_speed = Duration::from_millis(100); // Double speed
+                        ticker = Ticker::every(self.current_speed);
+                    }
+                    self.direction = new_dir;
                 }
-            } else if new_x != 0 || new_y != 0 {
-                let direction = Dot::new(new_x, new_y);
-                if !self.direction.is_opposite(&direction) {
-                    self.direction = direction;
+            } else {
+                // Reset to normal speed when no direction is pressed
+                if self.current_speed != self.base_speed {
+                    self.current_speed = self.base_speed;
+                    ticker = Ticker::every(self.current_speed);
                 }
             }
 
-            if step >= 30 {
-                step = 0;
-
-                self.screen.clear();
-                self.draw_snake();
-                self.screen
-                    .set(self.apple.x as usize, self.apple.y as usize, RED_IDX);
-
-                if !self.move_forward() {
-                    self.game_over(ws2812, joystick).await;
-                    return;
-                }
-
-                self.screen.render(&mut leds);
-                ws2812.write(&leds).await;
+            // Move snake
+            if !self.move_forward() {
+                self.game_over(ws2812, joystick).await;
+                break;
             }
 
-            step += 1;
-            Timer::after_millis(20).await;
+            // Draw and update display
+            self.draw_snake();
+            self.screen.render(&mut leds);
+            ws2812.write(&leds).await;
+
+            ticker.next().await;
         }
     }
 }
@@ -871,7 +927,7 @@ impl TanksGame {
         let score_fig = DIGITS.wrapping_at(score_digit);
 
         self.screen.draw_figure(0, 0, &speed_fig, GREEN_IDX);
-        self.screen.draw_figure(4, 0, &score_fig, GREEN_IDX);
+        self.screen.draw_figure(5, 0, &score_fig, GREEN_IDX);
 
         // Draw horizontal line
         for x in 0..SCREEN_WIDTH {
@@ -955,198 +1011,397 @@ impl Game for TanksGame {
 struct RacesGame {
     screen: FrameBuffer,
     score: u8,
+    cars_destroyed: u8,
     car_pos: Dot,
-    obstacles: [Dot; 8], // Fixed size array for obstacles
+    obstacles: [Dot; 2],
     obstacle_count: usize,
-    bullets: [Dot; 4], // Fixed size array for bullets
+    bullets: [Dot; 4],
     bullet_count: usize,
+    max_bullets: u8,
     lives: u8,
     invulnerable_time: u8,
+    racing_cars: [Dot; 1],
+    racing_speeds: [i8; 1],
+    racing_car_health: u8,
+    road_animation: u8,
+    bullet_powerup: Option<Dot>,
     prng: Prng,
 }
 
 impl RacesGame {
     fn new() -> Self {
-        Self {
+        let prng = Prng::new(0x12345678);
+        let mut game = Self {
             screen: FrameBuffer::new(),
             score: 0,
-            car_pos: Dot::new(3, 27),
-            obstacles: [Dot::new(0, 0); 8],
+            cars_destroyed: 0,
+            car_pos: Dot::new(3, 28),
+            obstacles: [Dot::new(0, 0); 2],
             obstacle_count: 0,
             bullets: [Dot::new(0, 0); 4],
             bullet_count: 0,
+            max_bullets: 5,
             lives: 3,
             invulnerable_time: 0,
-            prng: Prng::new(13579),
+            racing_cars: [Dot::new(0, 0); 1],
+            racing_speeds: [1],
+            racing_car_health: 3,
+            road_animation: 0,
+            bullet_powerup: None,
+            prng,
+        };
+
+        // Initialize racing car at the top
+        game.racing_cars[0] = Dot::new(3, 10);
+
+        game
+    }
+
+    fn spawn_obstacles(&mut self) {
+        if self.obstacle_count < self.obstacles.len() && self.prng.next_range(30) == 0 {
+            // Reduced spawn rate
+            let x = self.prng.next_range(6) as i8;
+            self.obstacles[self.obstacle_count] = Dot::new(x, 0);
+            self.obstacle_count += 1;
         }
     }
 
-    fn draw_score(&mut self) {
-        self.score %= 100;
-        let speed = self.score / 10;
-        let score_digit = self.score % 10;
-
-        let speed_fig = DIGITS.wrapping_at(speed);
-        let score_fig = DIGITS.wrapping_at(score_digit);
-
-        self.screen.draw_figure(0, 0, &speed_fig, GREEN_IDX);
-        self.screen.draw_figure(4, 0, &score_fig, GREEN_IDX);
-
-        // Draw horizontal line
-        for x in 0..SCREEN_WIDTH {
-            self.screen.set(x, 5, PINK_IDX);
+    fn spawn_bullet_powerup(&mut self) {
+        if self.bullet_powerup.is_none() && self.prng.next_range(50) == 0 {
+            let x = self.prng.next_range(5) as i8 + 1;
+            self.bullet_powerup = Some(Dot::new(x, 0));
         }
     }
 
-    fn draw_road(&mut self) {
-        // Draw road edges
-        for y in 6..SCREEN_HEIGHT {
-            self.screen.set(0, y, PINK_IDX);
-            self.screen.set(SCREEN_WIDTH - 1, y, PINK_IDX);
+    fn update_bullet_powerup(&mut self) {
+        if let Some(mut powerup) = self.bullet_powerup.take() {
+            powerup.y += 1;
+
+            // Check collision with player car
+            if (powerup.x == self.car_pos.x
+                || powerup.x == self.car_pos.x - 1
+                || powerup.x == self.car_pos.x + 1)
+                && (powerup.y >= self.car_pos.y - 3 && powerup.y <= self.car_pos.y)
+            {
+                if self.max_bullets < 5 {
+                    self.max_bullets += 1;
+                }
+            } else if powerup.y < SCREEN_HEIGHT as i8 {
+                // Only keep powerup if not collected and still on screen
+                self.bullet_powerup.replace(powerup);
+            }
         }
     }
 
-    fn draw_car(&mut self) {
-        // Draw car as a simple 3x5 shape
-        if self.invulnerable_time == 0 || self.invulnerable_time % 4 < 2 {
-            for dy in 0..5 {
-                for dx in 0..3 {
-                    let x = self.car_pos.x + dx;
-                    let y = self.car_pos.y + dy;
-                    if x >= 0 && x < SCREEN_WIDTH as i8 && y >= 0 && y < SCREEN_HEIGHT as i8 {
-                        self.screen.set(x as usize, y as usize, GREEN_IDX);
+    fn draw_bullet_powerup(&mut self) {
+        if let Some(powerup) = self.bullet_powerup {
+            if powerup.y >= 0 && powerup.y < SCREEN_HEIGHT as i8 {
+                // Draw two vertical dots in pink
+                self.screen
+                    .set(powerup.x as usize, powerup.y as usize, PINK_IDX);
+                self.screen
+                    .set(powerup.x as usize, (powerup.y + 1) as usize, PINK_IDX);
+            }
+        }
+    }
+
+    fn update_racing_cars(&mut self) {
+        for i in 0..self.racing_cars.len() {
+            // Only move every 4 frames to make it very slow
+            if self.prng.next_range(4) == 0 {
+                let new_y = self.racing_cars[i].y + self.racing_speeds[i];
+
+                // Check if new position would overlap with any obstacle
+                let mut can_move = true;
+                for j in 0..self.obstacle_count {
+                    let obs = self.obstacles[j];
+                    if (obs.x == self.racing_cars[i].x || obs.x == self.racing_cars[i].x + 1)
+                        && (obs.y == new_y || obs.y == new_y + 1)
+                    {
+                        can_move = false;
+                        break;
+                    }
+                }
+
+                // Only move if no obstacle collision
+                if can_move {
+                    self.racing_cars[i].y = new_y;
+                }
+            }
+
+            // If car goes off screen at bottom, reset it to top with random x position
+            if self.racing_cars[i].y >= SCREEN_HEIGHT as i8 {
+                self.racing_cars[i].y = 0;
+                // Try to find a position that doesn't overlap with obstacles
+                loop {
+                    let new_x = self.prng.next_range(5) as i8 + 1;
+                    let mut valid_position = true;
+
+                    for j in 0..self.obstacle_count {
+                        let obs = self.obstacles[j];
+                        if (obs.x == new_x || obs.x == new_x + 1) && (obs.y == 0 || obs.y == 1) {
+                            valid_position = false;
+                            break;
+                        }
+                    }
+
+                    if valid_position {
+                        self.racing_cars[i].x = new_x;
+                        break;
                     }
                 }
             }
         }
     }
 
-    fn draw_obstacles(&mut self) {
+    fn draw_racing_cars(&mut self) {
+        for i in 0..self.racing_cars.len() {
+            let car = self.racing_cars[i];
+            if car.y >= 0 && car.y < SCREEN_HEIGHT as i8 && self.racing_car_health > 0 {
+                // Draw racing car (same shape as player car but in blue)
+                let x = car.x as usize;
+                let y = car.y as usize;
+
+                // Draw car body
+                self.screen.set(x - 1, y, BLUE_IDX);
+                self.screen.set(x, y, BLUE_IDX);
+                self.screen.set(x + 1, y, BLUE_IDX);
+                self.screen.set(x, y - 1, BLUE_IDX);
+                self.screen.set(x, y - 2, BLUE_IDX);
+                self.screen.set(x - 1, y - 2, BLUE_IDX);
+                self.screen.set(x + 1, y - 2, BLUE_IDX);
+                self.screen.set(x, y - 3, BLUE_IDX);
+            }
+        }
+    }
+
+    fn update_obstacles(&mut self) {
+        let mut i = 0;
+        while i < self.obstacle_count {
+            self.obstacles[i].y += 1;
+
+            // Remove obstacles that are off screen
+            if self.obstacles[i].y >= SCREEN_HEIGHT as i8 {
+                // Remove by swapping with last obstacle
+                self.obstacle_count -= 1;
+                if i < self.obstacle_count {
+                    self.obstacles[i] = self.obstacles[self.obstacle_count];
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn update_bullets(&mut self) {
+        let mut i = 0;
+        while i < self.bullet_count {
+            self.bullets[i].y -= 1;
+
+            // Remove bullets that are off screen
+            if self.bullets[i].y < 0 {
+                // Remove by swapping with last bullet
+                self.bullet_count -= 1;
+                if i < self.bullet_count {
+                    self.bullets[i] = self.bullets[self.bullet_count];
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn check_car_obstacle_collision(&self, obs: &Dot) -> bool {
+        // Check collision with the entire car shape
+        // Bottom row (3 pixels wide)
+        if (obs.x == self.car_pos.x - 1 || obs.x == self.car_pos.x || obs.x == self.car_pos.x + 1)
+            && obs.y == self.car_pos.y
+        {
+            return true;
+        }
+        // Middle section (1 pixel wide, 2 pixels tall)
+        if obs.x == self.car_pos.x && (obs.y == self.car_pos.y - 1 || obs.y == self.car_pos.y - 2) {
+            return true;
+        }
+        // Top row (3 pixels wide)
+        if (obs.x == self.car_pos.x - 1 || obs.x == self.car_pos.x + 1)
+            && obs.y == self.car_pos.y - 2
+        {
+            return true;
+        }
+        // Top pixel
+        if obs.x == self.car_pos.x && obs.y == self.car_pos.y - 3 {
+            return true;
+        }
+        false
+    }
+
+    fn check_bullet_obstacle_collision(&self, bullet: &Dot, obs: &Dot) -> bool {
+        (bullet.x == obs.x || bullet.x == obs.x + 1) && (bullet.y == obs.y || bullet.y == obs.y + 1)
+    }
+
+    fn check_bullet_racing_car_collision(&self, bullet: &Dot, racing_car: &Dot) -> bool {
+        ((bullet.x == racing_car.x - 1 || bullet.x == racing_car.x || bullet.x == racing_car.x + 1)
+            && (bullet.y == racing_car.y))
+            || ((bullet.x == racing_car.x)
+                && (bullet.y == racing_car.y - 1 || bullet.y == racing_car.y - 2))
+            || ((bullet.x == racing_car.x - 1 || bullet.x == racing_car.x + 1)
+                && (bullet.y == racing_car.y - 2))
+            || ((bullet.x == racing_car.x) && (bullet.y == racing_car.y - 3))
+    }
+
+    fn check_collisions(&mut self) {
+        if self.invulnerable_time > 0 {
+            self.invulnerable_time -= 1;
+            return;
+        }
+
+        // Check car-obstacle collisions
         for i in 0..self.obstacle_count {
-            let obs = &self.obstacles[i];
-            // Draw obstacle as 3x3 block
-            for dy in 0..3 {
-                for dx in 0..3 {
-                    let x = obs.x + dx;
-                    let y = obs.y + dy;
-                    if x >= 0 && x < SCREEN_WIDTH as i8 && y >= 0 && y < SCREEN_HEIGHT as i8 {
-                        self.screen.set(x as usize, y as usize, RED_IDX);
+            let obs = self.obstacles[i];
+            if self.check_car_obstacle_collision(&obs) {
+                self.lives -= 1;
+                self.invulnerable_time = 20; // 1 second of invulnerability
+                return;
+            }
+        }
+
+        // Check bullet collisions
+        let mut i = 0;
+        while i < self.bullet_count {
+            let bullet = self.bullets[i];
+            let mut hit = false;
+
+            // Check bullet-obstacle collisions
+            let mut j = 0;
+            while j < self.obstacle_count {
+                let obs = self.obstacles[j];
+                if self.check_bullet_obstacle_collision(&bullet, &obs) {
+                    // Remove obstacle
+                    self.obstacle_count -= 1;
+                    if j < self.obstacle_count {
+                        self.obstacles[j] = self.obstacles[self.obstacle_count];
+                    }
+                    hit = true;
+                    break;
+                }
+                j += 1;
+            }
+
+            // Check bullet-racing car collisions
+            if !hit && self.racing_car_health > 0 {
+                let racing_car = self.racing_cars[0];
+                if self.check_bullet_racing_car_collision(&bullet, &racing_car) {
+                    self.racing_car_health -= 1;
+                    hit = true;
+
+                    // If racing car is destroyed, increment counter and respawn it
+                    if self.racing_car_health == 0 {
+                        self.cars_destroyed += 1;
+                        self.racing_cars[0].y = 0;
+                        self.racing_cars[0].x = self.prng.next_range(5) as i8 + 1;
+                        self.racing_car_health = 3;
                     }
                 }
+            }
+
+            if hit {
+                // Remove bullet
+                self.bullet_count -= 1;
+                if i < self.bullet_count {
+                    self.bullets[i] = self.bullets[self.bullet_count];
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    fn draw_road(&mut self) {
+        // Draw intermittent road edges with animation
+        for y in 0..SCREEN_HEIGHT {
+            // Left edge
+            if (y + self.road_animation as usize) % 4 < 2 {
+                self.screen.set(0, y, BRICK_IDX);
+            }
+            // Right edge
+            if (y + self.road_animation as usize) % 4 < 2 {
+                self.screen.set(7, y, BRICK_IDX);
+            }
+        }
+    }
+
+    fn draw_car(&mut self) {
+        let x = self.car_pos.x as usize;
+        let y = self.car_pos.y as usize;
+
+        if self.invulnerable_time > 0 && (self.invulnerable_time / 4) % 2 == 0 {
+            // Blink car when invulnerable
+            return;
+        }
+
+        self.screen.set(x - 1, y, GREEN_IDX);
+        self.screen.set(x, y, GREEN_IDX);
+        self.screen.set(x + 1, y, GREEN_IDX);
+        self.screen.set(x, y - 1, GREEN_IDX);
+        self.screen.set(x, y - 2, GREEN_IDX);
+        self.screen.set(x - 1, y - 2, GREEN_IDX);
+        self.screen.set(x + 1, y - 2, GREEN_IDX);
+        self.screen.set(x, y - 3, GREEN_IDX);
+    }
+
+    fn draw_obstacles(&mut self) {
+        for i in 0..self.obstacle_count {
+            let obs = self.obstacles[i];
+            if obs.y >= 0 && obs.y < SCREEN_HEIGHT as i8 {
+                // Draw bigger obstacle (2x2) in dark green
+                self.screen
+                    .set(obs.x as usize, obs.y as usize, DARK_GREEN_IDX);
+                self.screen
+                    .set(obs.x as usize + 1, obs.y as usize, DARK_GREEN_IDX);
+                self.screen
+                    .set(obs.x as usize, obs.y as usize + 1, DARK_GREEN_IDX);
+                self.screen
+                    .set(obs.x as usize + 1, obs.y as usize + 1, DARK_GREEN_IDX);
             }
         }
     }
 
     fn draw_bullets(&mut self) {
         for i in 0..self.bullet_count {
-            let bullet = &self.bullets[i];
-            if bullet.x >= 0
-                && bullet.x < SCREEN_WIDTH as i8
-                && bullet.y >= 0
-                && bullet.y < SCREEN_HEIGHT as i8
-            {
+            let bullet = self.bullets[i];
+            if bullet.y >= 0 && bullet.y < SCREEN_HEIGHT as i8 {
                 self.screen
-                    .set(bullet.x as usize, bullet.y as usize, YELLOW_IDX);
+                    .set(bullet.x as usize, bullet.y as usize, RED_IDX);
             }
         }
     }
 
-    fn spawn_obstacles(&mut self) {
-        if self.obstacle_count < self.obstacles.len() && self.prng.next_range(30) == 0 {
-            // Choose random lane (avoid road edges)
-            let lane = 1 + self.prng.next_range(SCREEN_WIDTH as u8 - 4);
+    fn draw_score(&mut self) {
+        let score = self.cars_destroyed;
 
-            // Make sure obstacle doesn't overlap with existing ones
-            let mut can_spawn = true;
-            for i in 0..self.obstacle_count {
-                if self.obstacles[i].y < 10 && (self.obstacles[i].x - lane as i8).abs() < 4 {
-                    can_spawn = false;
-                    break;
-                }
-            }
+        // Draw left digit (tens)
+        let tens = score / 10;
+        let tens_figure = DIGITS.wrapping_at(tens);
+        // Add extra space for digit one
+        let tens_x = if tens == 1 { 1 } else { 0 };
+        self.screen.draw_figure(tens_x, 0, &tens_figure, YELLOW_IDX);
 
-            if can_spawn {
-                self.obstacles[self.obstacle_count] = Dot::new(lane as i8, 6);
-                self.obstacle_count += 1;
-            }
-        }
-    }
+        // Draw right digit (ones)
+        let ones = score % 10;
+        let ones_figure = DIGITS.wrapping_at(ones);
+        // Add extra space for digit one
+        let ones_x = if ones == 1 { 6 } else { 5 };
+        self.screen.draw_figure(ones_x, 0, &ones_figure, YELLOW_IDX);
 
-    fn update_obstacles(&mut self) {
-        // Move obstacles down
-        let mut active_count = 0;
-        for i in 0..self.obstacle_count {
-            self.obstacles[i].y += 1;
-            if self.obstacles[i].y < SCREEN_HEIGHT as i8 {
-                if active_count != i {
-                    self.obstacles[active_count] = self.obstacles[i];
-                }
-                active_count += 1;
-            }
-        }
-        self.obstacle_count = active_count;
-    }
-
-    fn update_bullets(&mut self) {
-        // Move bullets up and check collisions
-        let mut active_bullets = 0;
-        let mut active_obstacles = 0;
-
-        for i in 0..self.bullet_count {
-            self.bullets[i].y -= 2;
-            if self.bullets[i].y >= 0 {
-                // Check collision with obstacles
-                let mut hit = false;
-                for j in 0..self.obstacle_count {
-                    if (self.bullets[i].x - self.obstacles[j].x).abs() <= 1
-                        && (self.bullets[i].y - self.obstacles[j].y).abs() <= 1
-                    {
-                        hit = true;
-                        self.score += 10;
-                        // Mark obstacle for removal
-                        self.obstacles[j].y = SCREEN_HEIGHT as i8; // Move off screen
-                        break;
-                    }
-                }
-
-                if !hit {
-                    if active_bullets != i {
-                        self.bullets[active_bullets] = self.bullets[i];
-                    }
-                    active_bullets += 1;
-                }
-            }
-        }
-        self.bullet_count = active_bullets;
-
-        // Remove hit obstacles
-        for i in 0..self.obstacle_count {
-            if self.obstacles[i].y < SCREEN_HEIGHT as i8 {
-                if active_obstacles != i {
-                    self.obstacles[active_obstacles] = self.obstacles[i];
-                }
-                active_obstacles += 1;
-            }
-        }
-        self.obstacle_count = active_obstacles;
-    }
-
-    fn check_collisions(&mut self) {
-        if self.invulnerable_time > 0 {
-            return;
+        // Draw vertical line of lives in the middle
+        for y in 0..self.lives {
+            self.screen.set(3, y as usize, GREEN_IDX);
         }
 
-        let car_center = Dot::new(self.car_pos.x + 1, self.car_pos.y + 2);
-
-        for i in 0..self.obstacle_count {
-            let obs_center = Dot::new(self.obstacles[i].x + 1, self.obstacles[i].y + 1);
-
-            if (car_center.x - obs_center.x).abs() <= 2 && (car_center.y - obs_center.y).abs() <= 3
-            {
-                self.lives -= 1;
-                self.invulnerable_time = 60; // 3 seconds at 50ms per frame
-                break;
-            }
+        // Draw bullet count to the right of lives in pink
+        for y in 0..self.max_bullets {
+            self.screen.set(4, y as usize, PINK_IDX);
         }
     }
 
@@ -1155,24 +1410,24 @@ impl RacesGame {
         ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
         joystick: &mut Joystick<'_>,
     ) {
-        let mut leds: [RGB8; 256] = [RGB8::default(); 256];
+        let mut leds = [RGB8::new(0, 0, 0); 256];
 
-        loop {
-            if joystick.was_pressed() {
-                break;
-            }
-
-            // Flash the screen
-            for _ in 0..10 {
-                let x = self.prng.next_range(SCREEN_WIDTH as u8) as usize;
-                let y = (self.prng.next_range((SCREEN_HEIGHT - 6) as u8) + 6) as usize;
-                let color = self.prng.next_range(COLORS.len() as u8);
-                self.screen.set(x, y, color);
-            }
-
+        // Flash screen
+        for _ in 0..3 {
+            self.screen.clear();
             self.screen.render(&mut leds);
             ws2812.write(&leds).await;
-            Timer::after_millis(100).await;
+            Timer::after(Duration::from_millis(200)).await;
+
+            self.draw_score();
+            self.screen.render(&mut leds);
+            ws2812.write(&leds).await;
+            Timer::after(Duration::from_millis(200)).await;
+        }
+
+        // Wait for button press
+        while !joystick.was_pressed() {
+            Timer::after(Duration::from_millis(50)).await;
         }
     }
 }
@@ -1183,76 +1438,86 @@ impl Game for RacesGame {
         ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
         joystick: &mut Joystick<'_>,
     ) {
-        let mut step = 0;
-        let mut leds: [RGB8; 256] = [RGB8::default(); 256];
+        let mut leds = [RGB8::new(0, 0, 0); 256];
+        let mut ticker = Ticker::every(Duration::from_millis(100));
+        let mut obstacle_timer = 0;
+        let mut road_timer = 0;
 
         loop {
-            self.screen.clear();
-            self.draw_score();
-            self.draw_road();
+            // Handle joystick input
+            let x = joystick.read_x().await;
+            let y = joystick.read_y().await;
 
-            let x_input = joystick.read_x().await;
-            let y_input = joystick.read_y().await;
-
-            // Move car
-            if x_input != 0 && y_input != 0 {
-                // Prioritize horizontal movement
-                let new_pos = self.car_pos.move_by(Dot::new(x_input, 0));
-                if new_pos.x >= 1 && new_pos.x < (SCREEN_WIDTH - 4) as i8 {
-                    self.car_pos = new_pos;
-                }
-            } else {
-                let new_pos = self.car_pos.move_by(Dot::new(x_input, y_input));
-                if new_pos.x >= 1
-                    && new_pos.x < (SCREEN_WIDTH - 4) as i8
-                    && new_pos.y >= 6
-                    && new_pos.y < (SCREEN_HEIGHT - 5) as i8
-                {
-                    self.car_pos = new_pos;
+            // Move car horizontally
+            if x != 0 {
+                let new_x = self.car_pos.x + x;
+                if new_x >= 1 && new_x <= SCREEN_WIDTH as i8 - 2 {
+                    self.car_pos.x = new_x;
                 }
             }
 
-            if joystick.was_pressed() && self.bullet_count < self.bullets.len() {
-                self.bullets[self.bullet_count] = Dot::new(self.car_pos.x + 1, self.car_pos.y - 1);
+            // Move car vertically
+            if y != 0 {
+                let new_y = self.car_pos.y + y;
+                if new_y >= 3 && new_y <= SCREEN_HEIGHT as i8 - 1 {
+                    self.car_pos.y = new_y;
+                }
+            }
+
+            // Update road animation automatically
+            road_timer = (road_timer + 1) % 2; // Update every 2 frames
+            if road_timer == 0 {
+                self.road_animation = (self.road_animation + 1) % 4;
+            }
+
+            // Fire bullet on button press
+            if joystick.was_pressed()
+                && self.bullet_count < self.bullets.len()
+                && self.max_bullets > 0
+            {
+                self.bullets[self.bullet_count] = Dot::new(self.car_pos.x, self.car_pos.y - 4);
                 self.bullet_count += 1;
+                self.max_bullets -= 1; // Decrement available bullets when firing
             }
 
             // Update game state
-            self.update_bullets();
             self.spawn_obstacles();
+            self.spawn_bullet_powerup();
+            self.update_bullet_powerup();
 
-            if step % 5 == 0 {
+            // Update obstacles every 3 frames
+            obstacle_timer = (obstacle_timer + 1) % 3;
+            if obstacle_timer == 0 {
                 self.update_obstacles();
             }
 
+            // Update racing cars
+            self.update_racing_cars();
+
+            self.update_bullets();
             self.check_collisions();
-
-            // Draw everything
-            self.draw_obstacles();
-            self.draw_bullets();
-            self.draw_car();
-
-            // Draw lives
-            for i in 0..self.lives.min(3) {
-                self.screen.set(3 + i as usize * 2, 1, LIGHT_BLUE_IDX);
-            }
-
-            self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
 
             // Check game over
             if self.lives == 0 {
                 self.game_over(ws2812, joystick).await;
-                return;
+                break;
             }
 
-            // Update counters
-            if self.invulnerable_time > 0 {
-                self.invulnerable_time -= 1;
-            }
+            // Draw everything
+            self.screen.clear();
+            self.draw_road();
+            self.draw_obstacles();
+            self.draw_bullet_powerup();
+            self.draw_bullets();
+            self.draw_racing_cars();
+            self.draw_car();
+            self.draw_score();
 
-            step += 1;
-            Timer::after_millis(50).await;
+            // Update display
+            self.screen.render(&mut leds);
+            ws2812.write(&leds).await;
+
+            ticker.next().await;
         }
     }
 }
@@ -1261,6 +1526,54 @@ impl Game for RacesGame {
 async fn button_task(mut button_controller: ButtonController) {
     button_controller.run().await;
 }
+
+// Game title graphics (converted from Python GAMES array)
+const TETRIS_TITLE: [u32; 8] = [
+    0b_00000000000000000000000000000000,
+    0b_00000000000000000000000000000000,
+    0b_01110011100111001110010010011100,
+    0b_00100010000010001010010010010000,
+    0b_00100011100010001110010110010000,
+    0b_00100010000010001000011010010000,
+    0b_00100011100010001000010010011100,
+    0b_00000000000000000000000000000000,
+];
+
+const RACES_TITLE: [u32; 8] = [
+    0b_00000000000000000000000000000000,
+    0b_00000000000000000000000000000000,
+    0b_00001110011100101001010010010000,
+    0b_00001000010100101001100010010000,
+    0b_00001000010100111001100010110000,
+    0b_00001000010100101001010011010000,
+    0b_00001000011100101001010010010000,
+    0b_00000000000000000000000000000000,
+];
+
+const TANKS_TITLE: [u32; 8] = [
+    0b_00000000000000000000000000000000,
+    0b_00000000000000000000000000000000,
+    0b_00001110001000101001010010010000,
+    0b_00000100010100101001100010010000,
+    0b_00000100011100111001100010110000,
+    0b_00000100010100101001010011010000,
+    0b_00000100010100101001010010010000,
+    0b_00000000000000000000000000000000,
+];
+
+const SNAKE_TITLE: [u32; 8] = [
+    0b_00000000000000000000000000000000,
+    0b_00000000000000000010000000000000,
+    0b_01100110110111001000101001001100,
+    0b_00010101010100001001101010010010,
+    0b_01100100010111001010101100011110,
+    0b_00010100010100001100101010010010,
+    0b_01100100010111001000101001010010,
+    0b_00000000000000000000000000000000,
+];
+
+// Game titles array
+const GAME_TITLES: [&[u32; 8]; 4] = [&TETRIS_TITLE, &SNAKE_TITLE, &TANKS_TITLE, &RACES_TITLE];
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -1280,18 +1593,14 @@ async fn main(spawner: Spawner) {
 
     // Game menu
     let mut game_idx: u8 = 0;
-    let num_games = 4; // Tetris, Snake, Tanks, Races
 
     info!("Starting main menu loop");
-    let mut n = 0;
     loop {
-        info!("Iteration {}", n);
-        n += 1;
         // Read joystick for menu navigation
         let x_input = joystick.read_x().await;
 
         if x_input != 0 {
-            game_idx = game_idx.wrapping_add(x_input as u8) % num_games;
+            game_idx = game_idx.wrapping_add(x_input as u8) % GAME_TITLES.len() as u8;
             Timer::after_millis(200).await; // Debounce
         }
 
@@ -1323,13 +1632,12 @@ async fn main(spawner: Spawner) {
 
         // Display menu - show game index
         leds.fill(BLACK);
-        let digit = DIGITS.wrapping_at(game_idx as u8);
-        let mut screen = FrameBuffer::new();
-        screen.draw_figure(2, 14, &digit, GREEN_IDX);
+        let title = GAME_TITLES[game_idx as usize % GAME_TITLES.len()];
+        let screen = framebuffer_from_rows(title, GREEN_IDX);
         screen.render(&mut leds);
         ws2812.write(&leds).await;
 
-        // Phantom press ???
+        // Phantom press detected due to ws2812 write ???
         _ = joystick.was_pressed();
 
         Timer::after_millis(100).await;

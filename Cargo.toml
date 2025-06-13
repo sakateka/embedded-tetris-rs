@@ -27,9 +27,4 @@ lto = true
 opt-level = 'z'
 
 [build-dependencies]
-quote = "1.0.40"
 no_std_strings = "0.1.3"
-proc-macro2 = "1.0.95"
-prettyplease = "0.2.33"
-smart-leds = "0.4.0"
-syn = { version = "2.0.103", features = ["full", "parsing"] }

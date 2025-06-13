@@ -5,7 +5,7 @@ use smart_leds::RGB8;
 
 type Painter = fn(&mut [RGB8], u8, u8, RGB8) -> bool;
 
-#[derive(Default, Copy, Clone)]
+#[derive(Default, Copy, Clone, PartialEq, Debug)]
 pub struct Figure {
     pub data: u16,
     pub wh: u8,
@@ -98,7 +98,7 @@ impl Figure {
         if col >= self.width() || row >= self.height() {
             return false;
         }
-        let bit_idx = row * self.width() + col;
+        let bit_idx = (self.height() - 1 - row) * self.width() + (self.width() - 1 - col); // Flip both row and column order
         let cursor = 1u16 << bit_idx;
         self.data & cursor != 0
     }
@@ -150,6 +150,51 @@ impl Tetramino {
         self.0[idx]
     }
 }
+
+// Standard Tetris tetraminoes (I, O, T, S, Z, J, L)
+pub const TETRAMINO: Tetramino = Tetramino::new([
+    // I: ####
+    Figure {
+        data: 0b1111,
+        wh: 4 << 4 | 1,
+    },
+    // O: ##
+    //    ##
+    Figure {
+        data: 0b11_11,
+        wh: 2 << 4 | 2,
+    },
+    // T: ###
+    //      #
+    Figure {
+        data: 0b111_010,
+        wh: 3 << 4 | 2,
+    },
+    // S:  ##
+    //    ##
+    Figure {
+        data: 0b011_110,
+        wh: 3 << 4 | 2,
+    },
+    // Z: ##
+    //     ##
+    Figure {
+        data: 0b110_011,
+        wh: 3 << 4 | 2,
+    },
+    // J: #
+    //   ###
+    Figure {
+        data: 0b100_111,
+        wh: 3 << 4 | 2,
+    },
+    // L:   #
+    //     ###
+    Figure {
+        data: 0b001_111,
+        wh: 3 << 4 | 2,
+    },
+]);
 
 #[cfg(test)]
 mod tests {
