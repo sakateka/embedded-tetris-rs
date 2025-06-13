@@ -16,8 +16,6 @@ pub struct SnakeGame {
     screen: FrameBuffer,
     prng: Prng,
     score: u8,
-    base_speed: Duration,
-    current_speed: Duration,
 }
 
 impl SnakeGame {
@@ -31,8 +29,6 @@ impl SnakeGame {
             screen: FrameBuffer::new(),
             prng,
             score: 0,
-            base_speed: Duration::from_millis(200),
-            current_speed: Duration::from_millis(200),
         };
 
         // Initialize snake body
@@ -168,7 +164,9 @@ impl Game for SnakeGame {
         joystick: &mut Joystick<'_>,
     ) {
         let mut leds = [RGB8::new(0, 0, 0); 256];
-        let mut ticker = Ticker::every(self.current_speed);
+        let mut ticker = Ticker::every(Duration::from_millis(20));
+        let mut step = 30;
+        let mut speedup = 1;
 
         loop {
             // Handle joystick input
@@ -180,30 +178,29 @@ impl Game for SnakeGame {
                 if !new_dir.is_opposite(&self.direction) {
                     // If pressing same direction as current movement, speed up
                     if new_dir.x == self.direction.x && new_dir.y == self.direction.y {
-                        self.current_speed = Duration::from_millis(100); // Double speed
-                        ticker = Ticker::every(self.current_speed);
+                        speedup = 5;
                     }
                     self.direction = new_dir;
                 }
             } else {
                 // Reset to normal speed when no direction is pressed
-                if self.current_speed != self.base_speed {
-                    self.current_speed = self.base_speed;
-                    ticker = Ticker::every(self.current_speed);
+                speedup = 1;
+            }
+
+            if step >= 30 {
+                step = 0;
+                // Move snake
+                if !self.move_forward() {
+                    self.game_over(leds, ws2812, joystick).await;
+                    break;
                 }
+
+                // Draw and update display
+                self.draw_snake();
+                self.screen.render(&mut leds);
+                ws2812.write(&leds).await;
             }
-
-            // Move snake
-            if !self.move_forward() {
-                self.game_over(leds, ws2812, joystick).await;
-                break;
-            }
-
-            // Draw and update display
-            self.draw_snake();
-            self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
-
+            step += speedup;
             ticker.next().await;
         }
     }

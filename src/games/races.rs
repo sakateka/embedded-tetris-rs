@@ -4,16 +4,20 @@ use smart_leds::RGB8;
 
 use crate::{
     common::{
-        Dot, FrameBuffer, Prng, BLUE_IDX, BRICK_IDX, DARK_GREEN_IDX, GREEN_IDX, PINK_IDX, RED_IDX,
-        SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
+        Dot, FrameBuffer, Prng, BLACK_IDX, BLUE_IDX, BRICK_IDX, DARK_GREEN_IDX, GREEN_IDX,
+        PINK_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
     },
     digits::DIGITS,
     Game, Joystick,
 };
 
+static ROAD_UPDATE_STEP_SIZE: u8 = 10;
+static UPDATE_STEP_SIZE: u8 = ROAD_UPDATE_STEP_SIZE * 2;
+
 // Races game implementation
 pub struct RacesGame {
     screen: FrameBuffer,
+    update_step: u8,
     cars_destroyed: u8,
     car_pos: Dot,
     obstacles: [Dot; 2],
@@ -26,6 +30,7 @@ pub struct RacesGame {
     racing_cars: [Dot; 1],
     racing_speeds: [i8; 1],
     racing_car_health: u8,
+    update_road: u8,
     road_animation: u8,
     bullet_powerup: Option<Dot>,
     prng: Prng,
@@ -36,6 +41,7 @@ impl RacesGame {
         let prng = Prng::new();
         let mut game = Self {
             screen: FrameBuffer::new(),
+            update_step: 0,
             cars_destroyed: 0,
             car_pos: Dot::new(3, 28),
             obstacles: [Dot::new(0, 0); 2],
@@ -48,6 +54,7 @@ impl RacesGame {
             racing_cars: [Dot::new(0, 0); 1],
             racing_speeds: [1],
             racing_car_health: 3,
+            update_road: 0,
             road_animation: 0,
             bullet_powerup: None,
             prng,
@@ -175,6 +182,10 @@ impl RacesGame {
                 self.screen.set(x, y - 3, BLUE_IDX);
             }
         }
+    }
+    fn update_road(&mut self) {
+        self.update_road = (self.update_road + 1) % 4;
+        self.road_animation = (self.road_animation + 1) % SCREEN_HEIGHT as u8;
     }
 
     fn update_obstacles(&mut self) {
@@ -321,15 +332,23 @@ impl RacesGame {
 
     fn draw_road(&mut self) {
         // Draw intermittent road edges with animation
+        let mut bricks = 0i8;
+        let mut part = true;
         for y in 0..SCREEN_HEIGHT {
+            if bricks == 4 {
+                bricks = 0;
+                part = !part;
+            };
+            bricks += 1;
+
+            let color = if part { BRICK_IDX } else { BLACK_IDX };
+
             // Left edge
-            if (y + self.road_animation as usize) % 4 < 2 {
-                self.screen.set(0, y, BRICK_IDX);
-            }
+            self.screen
+                .set(0, (y + self.road_animation as usize) % SCREEN_HEIGHT, color);
             // Right edge
-            if (y + self.road_animation as usize) % 4 < 2 {
-                self.screen.set(7, y, BRICK_IDX);
-            }
+            self.screen
+                .set(7, (y + self.road_animation as usize) % SCREEN_HEIGHT, color);
         }
     }
 
@@ -431,6 +450,18 @@ impl RacesGame {
             Timer::after(Duration::from_millis(50)).await;
         }
     }
+
+    fn road_should_update(&mut self) -> bool {
+        self.update_step = (self.update_step + 1) % UPDATE_STEP_SIZE;
+        self.update_step % ROAD_UPDATE_STEP_SIZE == 0
+    }
+    fn can_move_car_horizontally(&mut self) -> bool {
+        self.update_step % (ROAD_UPDATE_STEP_SIZE / 2) == 0
+    }
+
+    fn should_update(&mut self) -> bool {
+        self.update_step == 0
+    }
 }
 
 impl Game for RacesGame {
@@ -440,37 +471,9 @@ impl Game for RacesGame {
         joystick: &mut Joystick<'_>,
     ) {
         let mut leds = [RGB8::new(0, 0, 0); 256];
-        let mut ticker = Ticker::every(Duration::from_millis(100));
-        let mut obstacle_timer = 0;
-        let mut road_timer = 0;
+        let mut ticker = Ticker::every(Duration::from_millis(20));
 
         loop {
-            // Handle joystick input
-            let x = joystick.read_x().await;
-            let y = joystick.read_y().await;
-
-            // Move car horizontally
-            if x != 0 {
-                let new_x = self.car_pos.x + x;
-                if new_x >= 1 && new_x <= SCREEN_WIDTH as i8 - 2 {
-                    self.car_pos.x = new_x;
-                }
-            }
-
-            // Move car vertically
-            if y != 0 {
-                let new_y = self.car_pos.y + y;
-                if new_y >= 3 && new_y < SCREEN_HEIGHT as i8 {
-                    self.car_pos.y = new_y;
-                }
-            }
-
-            // Update road animation automatically
-            road_timer = (road_timer + 1) % 2; // Update every 2 frames
-            if road_timer == 0 {
-                self.road_animation = (self.road_animation + 1) % 4;
-            }
-
             // Fire bullet on button press
             if joystick.was_pressed()
                 && self.bullet_count < self.bullets.len()
@@ -481,20 +484,40 @@ impl Game for RacesGame {
                 self.max_bullets -= 1; // Decrement available bullets when firing
             }
 
-            // Update game state
             self.spawn_obstacles();
             self.spawn_bullet_powerup();
-            self.update_bullet_powerup();
+            // Handle joystick input
+            let x = joystick.read_x().await;
+            let y = joystick.read_y().await;
 
-            // Update obstacles every 3 frames
-            obstacle_timer = (obstacle_timer + 1) % 3;
-            if obstacle_timer == 0 {
-                self.update_obstacles();
+            if self.can_move_car_horizontally() {
+                // Move car horizontally
+                if x != 0 {
+                    let new_x = self.car_pos.x + x;
+                    if new_x >= 1 && new_x <= SCREEN_WIDTH as i8 - 2 {
+                        self.car_pos.x = new_x;
+                    }
+                }
             }
 
-            // Update racing cars
-            self.update_racing_cars();
+            if self.road_should_update() {
+                // Move car vertically
+                if y != 0 {
+                    let new_y = self.car_pos.y + y;
+                    if new_y >= 3 && new_y < SCREEN_HEIGHT as i8 {
+                        self.car_pos.y = new_y;
+                    }
+                }
 
+                self.update_obstacles();
+                self.update_road();
+            }
+
+            // Update game state
+            if self.should_update() {
+                self.update_bullet_powerup();
+                self.update_racing_cars();
+            }
             self.update_bullets();
             self.check_collisions();
 
