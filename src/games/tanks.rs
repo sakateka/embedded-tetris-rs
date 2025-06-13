@@ -16,18 +16,11 @@ struct Missile {
     y: i8,
     dx: i8,
     dy: i8,
-    _group: u8,
 }
 
 impl Missile {
-    fn new(x: i8, y: i8, dx: i8, dy: i8, group: u8) -> Self {
-        Self {
-            x,
-            y,
-            dx,
-            dy,
-            _group: group,
-        }
+    fn new(x: i8, y: i8, dx: i8, dy: i8) -> Self {
+        Self { x, y, dx, dy }
     }
 
     fn move_(&mut self) {
@@ -48,58 +41,68 @@ impl Missile {
 #[derive(Clone, Copy)]
 struct Tank {
     missiles: [Missile; 8],
-    missile_count: usize,
     pos: Dot,
-    origin: u8,
-    player: bool,
+    origin: i8,
     rotation: u8,
+    rotations: [Dot; 4],
     figure: Figure,
     lives: i8,
 }
 
 impl Tank {
-    pub fn new(pos: Dot, origin: u8, player: bool) -> Self {
+    pub fn new(pos: Dot, origin: i8) -> Self {
         Self {
-            missiles: [Missile::new(-1, -1, 0, 0, 0); 8],
-            missile_count: 0,
+            missiles: [Missile::new(-1, -1, 0, 0); 8],
             pos,
             origin,
-            player,
-            rotation: 0,
+            rotation: 2,
+            rotations: [
+                Dot::new(-1, 0),
+                Dot::new(0, -1),
+                Dot::new(1, 0),
+                Dot::new(0, 1),
+            ],
             figure: TANK,
             lives: 1,
         }
     }
 
+    fn player(&self) -> bool {
+        self.origin == -1
+    }
+
     fn direction(&self) -> Dot {
-        match self.rotation {
-            0 => Dot::new(1, 0),
-            1 => Dot::new(0, 1),
-            2 => Dot::new(-1, 0),
-            _ => Dot::new(0, -1),
-        }
+        self.rotations[self.rotation as usize % self.rotations.len()]
     }
 
-    fn rotate(&mut self, clockwise: bool) {
-        if clockwise {
-            self.rotation = (self.rotation + 1) % 4;
-        } else {
-            self.rotation = (self.rotation + 3) % 4;
+    fn rotate(&mut self, direction: &Dot) -> bool {
+        let mut rotated = 0;
+        while self.direction() != *direction {
+            self.figure = self.figure.rotate();
+            self.rotation = (self.rotation + 1) % self.rotations.len() as u8;
+            rotated += 1;
+            if rotated == self.rotations.len() {
+                return false;
+            }
         }
+        rotated > 0
     }
 
-    fn fire(&mut self) {
-        if self.missile_count < self.missiles.len() {
-            let direction = self.direction();
-            let pos = self.pos.move_by(Dot::new(1, 1));
-            self.missiles[self.missile_count] = Missile::new(
-                pos.x,
-                pos.y,
-                direction.x,
-                direction.y,
-                if self.player { 0 } else { 1 },
-            );
-            self.missile_count += 1;
+    fn move_(
+        &mut self,
+        direction: &Dot,
+        collides: impl Fn(i8, i8, &Figure) -> bool,
+        allow_backward: bool,
+    ) {
+        if !direction.is_zero()
+            && ((allow_backward && self.direction().is_opposite(direction))
+                || !self.rotate(direction))
+        {
+            let pos = self.pos.move_by(*direction);
+            if !collides(pos.x, pos.y, &self.figure) {
+                info!("set new pos {:?}", pos);
+                self.pos = pos;
+            }
         }
     }
 
@@ -108,9 +111,22 @@ impl Tank {
         self.pos = self.pos.move_by(direction);
     }
 
+    fn fire(&mut self) {
+        let direction = self.direction();
+        for m in &mut self.missiles {
+            if !m.visible() {
+                m.x = self.pos.x + direction.x;
+                m.y = self.pos.y + direction.y;
+                m.dx = direction.x;
+                m.dy = direction.y;
+                break;
+            }
+        }
+    }
+
     fn move_missiles(&mut self) {
-        for i in 0..self.missile_count {
-            self.missiles[i].move_();
+        for m in &mut self.missiles {
+            m.move_()
         }
     }
 
@@ -155,8 +171,8 @@ impl TanksGame {
     pub fn new() -> Self {
         Self {
             screen: FrameBuffer::new(),
-            tank: Tank::new(Dot::new(3, 16), 0, true),
-            enemies: [Tank::new(Dot::new(0, 0), 0, false); 4],
+            tank: Tank::new(Dot::new(3, 16), -1),
+            enemies: [Tank::new(Dot::new(0, 0), 0); 4],
             enemy_count: 0,
             score: 0,
             lives: 3,
@@ -182,7 +198,7 @@ impl TanksGame {
         }
     }
 
-    fn _has_line_of_sight(&self, tank: &Tank, target_pos: Dot) -> bool {
+    fn has_line_of_sight(&self, tank: &Tank, target_pos: Dot) -> bool {
         let tank_center = tank.pos.move_by(Dot::new(1, 1));
         let target_center = target_pos.move_by(Dot::new(1, 1));
 
@@ -275,8 +291,11 @@ impl TanksGame {
         for i in 0..dir_count {
             let pos = tank.pos.move_by(preferred_directions[i]);
             if !self.screen.collides(pos.x, pos.y, &tank.figure) {
-                tank.rotate(preferred_directions[i].x > 0);
-                tank.move_forward();
+                tank.move_(
+                    &preferred_directions[i],
+                    |x, y, _| self.screen.collides(x, y, &TANK),
+                    true,
+                );
                 return;
             }
         }
@@ -284,9 +303,196 @@ impl TanksGame {
         let direction = tank.direction();
         let pos = tank.pos.move_by(direction);
         if self.screen.collides(pos.x, pos.y, &tank.figure) {
-            tank.rotate(!direction.is_zero());
+            tank.rotate(&direction);
         }
-        tank.move_forward();
+        tank.move_(
+            &direction,
+            |x, y, _| self.screen.collides(x, y, &TANK),
+            false,
+        );
+    }
+
+    fn ai(&mut self) {
+        let stage = if self.enemy_count > 1 {
+            // Weight stages based on game state
+            let weighted_stages = if self.tank.lives <= 1 {
+                // More aggressive when player has fewer lives
+                [
+                    Self::STAGE_FIRE,
+                    Self::STAGE_FIRE,
+                    Self::STAGE_FIRE,
+                    Self::STAGE_FIRE,
+                    Self::STAGE_MOVE,
+                    Self::STAGE_MOVE,
+                    Self::STAGE_ROTATE,
+                    Self::STAGE_ROTATE,
+                    Self::STAGE_NONE,
+                ]
+            } else {
+                // Normal stage distribution
+                [
+                    Self::STAGE_FIRE,
+                    Self::STAGE_FIRE,
+                    Self::STAGE_MOVE,
+                    Self::STAGE_MOVE,
+                    Self::STAGE_MOVE,
+                    Self::STAGE_ROTATE,
+                    Self::STAGE_ROTATE,
+                    Self::STAGE_ROTATE,
+                    Self::STAGE_NONE,
+                ]
+            };
+            weighted_stages[self.prng.next_range(weighted_stages.len() as u8) as usize]
+        } else {
+            Self::STAGE_SPAWN
+        };
+
+        match stage {
+            Self::STAGE_SPAWN => {
+                if self.enemy_count < self.enemies.len() {
+                    let spawns = [
+                        Dot::new(0, 6),
+                        Dot::new(5, 6),
+                        Dot::new(0, 29),
+                        Dot::new(5, 29),
+                    ];
+
+                    // Smart spawning - prefer spawns closer to player
+                    let mut spawn_priorities: [(usize, i32); 32] = [(0, 0); 32];
+                    let mut spawn_count = 0;
+                    let player_pos = self.tank.pos;
+
+                    for (idx, &spawn_pos) in spawns.iter().enumerate() {
+                        if !self.enemies.iter().any(|e| e.origin == idx as i8) {
+                            // Calculate distance to player (Manhattan distance)
+                            let distance = (spawn_pos.x - player_pos.x).abs()
+                                + (spawn_pos.y - player_pos.y).abs();
+                            // Closer spawns get higher priority (lower distance = higher priority)
+                            let priority = 100 - distance;
+                            spawn_priorities[spawn_count] = (idx, priority.into());
+                            spawn_count += 1;
+                        }
+                    }
+
+                    if spawn_count > 0 {
+                        // Weighted random selection favoring closer spawns
+                        let total_weight: i32 = spawn_priorities[..spawn_count]
+                            .iter()
+                            .map(|(_, p)| *p)
+                            .sum();
+                        if total_weight > 0 {
+                            let rand_val = self.prng.next_range(total_weight as u8) as i32;
+                            let mut current_weight = 0;
+                            for i in 0..spawn_count {
+                                let (idx, priority) = spawn_priorities[i];
+                                current_weight += priority;
+                                if rand_val < current_weight {
+                                    let pos = spawns[idx];
+                                    self.enemies[self.enemy_count] = Tank::new(pos, idx as i8);
+                                    self.enemy_count += 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Self::STAGE_NONE => {}
+            _ => {
+                // Select tank based on strategic priority
+                let mut tank_priorities: [(usize, i32); 32] = [(0, 0); 32];
+                let mut tank_count = 0;
+                let player_pos = self.tank.pos;
+
+                for i in 0..self.enemy_count {
+                    let enemy = &self.enemies[i];
+                    if enemy.is_dying() {
+                        continue;
+                    }
+
+                    let mut priority = 1;
+
+                    // Higher priority for tanks closer to player
+                    let distance =
+                        (enemy.pos.x - player_pos.x).abs() + (enemy.pos.y - player_pos.y).abs();
+                    priority += (20 - distance).max(0);
+
+                    // Higher priority for tanks that can hit player in current direction
+                    if self.can_hit_player(enemy) {
+                        priority += 15;
+                    }
+
+                    // Higher priority for tanks with clear line of sight
+                    if self.has_line_of_sight(enemy, player_pos) {
+                        priority += 10;
+                    }
+
+                    tank_priorities[tank_count] = (i, priority.into());
+                    tank_count += 1;
+                }
+
+                if tank_count > 0 {
+                    // Weighted selection
+                    let total_weight: i32 =
+                        tank_priorities[..tank_count].iter().map(|(_, p)| *p).sum();
+                    let mut selected_idx = tank_priorities[0].0; // fallback
+
+                    if total_weight > 0 {
+                        let rand_val = self.prng.next_range(total_weight as u8) as i32;
+                        let mut current_weight = 0;
+                        for i in 0..tank_count {
+                            let (idx, priority) = tank_priorities[i];
+                            current_weight += priority;
+                            if rand_val < current_weight {
+                                selected_idx = idx;
+                                break;
+                            }
+                        }
+                    }
+
+                    let mut enemy = self.enemies[selected_idx];
+                    match stage {
+                        Self::STAGE_MOVE => {
+                            let direction = enemy.direction();
+                            let pos = enemy.pos.move_by(direction);
+                            if !self.screen.collides(pos.x, pos.y, &enemy.figure) {
+                                enemy.move_forward();
+                            } else {
+                                enemy.rotate(&Dot::new(0, 0));
+                            }
+                        }
+                        Self::STAGE_FIRE => {
+                            let can_hit = self.can_hit_player(&enemy);
+                            let random_fire = self.prng.next_range(10) == 0;
+                            if can_hit || random_fire {
+                                enemy.fire();
+                            }
+                        }
+                        Self::STAGE_ROTATE => {
+                            // Smart rotation towards player
+                            let dx = player_pos.x - enemy.pos.x;
+                            let dy = player_pos.y - enemy.pos.y;
+
+                            let target_direction = if dx.abs() > dy.abs() {
+                                Dot::new(if dx > 0 { 1 } else { -1 }, 0)
+                            } else {
+                                Dot::new(0, if dy > 0 { 1 } else { -1 })
+                            };
+
+                            if enemy.direction() != target_direction {
+                                enemy.rotate(&target_direction);
+                            } else if self.prng.next_range(4) == 0 {
+                                // Occasionally rotate randomly for unpredictability
+                                enemy.rotate(&Dot::new(0, 0));
+                            }
+                        }
+                        _ => {}
+                    }
+                    enemy.move_missiles();
+                    self.enemies[selected_idx] = enemy;
+                }
+            }
+        }
     }
 
     fn update_enemies(&mut self) {
@@ -332,8 +538,8 @@ impl TanksGame {
                     ];
 
                     for (idx, &spawn_pos) in spawns.iter().enumerate() {
-                        if !self.enemies.iter().any(|e| e.origin == idx as u8) {
-                            self.enemies[self.enemy_count] = Tank::new(spawn_pos, idx as u8, false);
+                        if !self.enemies.iter().any(|e| e.origin == idx as i8) {
+                            self.enemies[self.enemy_count] = Tank::new(spawn_pos, idx as i8);
                             self.enemy_count += 1;
                             break;
                         }
@@ -355,7 +561,7 @@ impl TanksGame {
                             if !self.screen.collides(pos.x, pos.y, &enemy.figure) {
                                 enemy.move_forward();
                             } else {
-                                enemy.rotate(self.prng.next_range(2) == 0);
+                                enemy.rotate(&Dot::new(0, 0));
                             }
                         }
                         Self::STAGE_FIRE => {
@@ -366,7 +572,7 @@ impl TanksGame {
                             }
                         }
                         Self::STAGE_ROTATE => {
-                            enemy.rotate(self.prng.next_range(2) == 0);
+                            enemy.rotate(&Dot::new(0, 0));
                         }
                         _ => {}
                     }
@@ -378,7 +584,11 @@ impl TanksGame {
     }
 
     fn draw_enemy_tank(&mut self, idx: usize) {
-        let color = if self.tank.player { GREEN_IDX } else { RED_IDX };
+        let color = if self.tank.player() {
+            GREEN_IDX
+        } else {
+            RED_IDX
+        };
         self.screen.draw_figure(
             self.enemies[idx].pos.x,
             self.enemies[idx].pos.y,
@@ -395,7 +605,11 @@ impl TanksGame {
         }
     }
     fn draw_tank(&mut self) {
-        let color = if self.tank.player { GREEN_IDX } else { RED_IDX };
+        let color = if self.tank.player() {
+            GREEN_IDX
+        } else {
+            RED_IDX
+        };
         self.screen
             .draw_figure(self.tank.pos.x, self.tank.pos.y, &self.tank.figure, color);
     }
@@ -431,30 +645,28 @@ impl TanksGame {
 
     fn draw_lives(&mut self) {
         for i in 0..self.lives {
-            self.screen.set(i as usize, 7, GREEN_IDX);
+            self.screen.set(i as usize, 0, GREEN_IDX);
         }
     }
 
     fn check_collisions(&mut self) {
         for i in 0..self.enemy_count {
             let enemy = &mut self.enemies[i];
-            for j in 0..enemy.missile_count {
-                let missile = &mut enemy.missiles[j];
-                if missile.visible() && self.tank.collides(Dot::new(missile.x, missile.y)) {
+            for m in &mut enemy.missiles {
+                if m.visible() && self.tank.collides(Dot::new(m.x, m.y)) {
                     self.tank.hit();
-                    missile.hide();
+                    m.hide();
                 }
             }
         }
 
-        for i in 0..self.tank.missile_count {
-            let missile = &mut self.tank.missiles[i];
-            if missile.visible() {
+        for m in &mut self.tank.missiles {
+            if m.visible() {
                 for j in 0..self.enemy_count {
                     let enemy = &mut self.enemies[j];
-                    if enemy.collides(Dot::new(missile.x, missile.y)) {
+                    if enemy.collides(Dot::new(m.x, m.y)) {
                         enemy.hit();
-                        missile.hide();
+                        m.hide();
                         if enemy.is_dead() {
                             self.score += 100;
                         }
@@ -495,6 +707,7 @@ impl Game for TanksGame {
         let mut round = 10;
 
         loop {
+            self.screen.clear();
             if self.tank.is_dead() {
                 self.game_over(leds, ws2812, joystick).await;
                 return;
@@ -506,18 +719,20 @@ impl Game for TanksGame {
 
             let x_input = joystick.read_x().await;
             let y_input = joystick.read_y().await;
-            let direction = Dot::new(x_input, y_input);
+            let direction = Dot::new(x_input, y_input).to_direction();
 
-            if !direction.is_zero() {
-                self.tank.rotate(direction.x > 0);
-                self.tank.move_forward();
-            }
+            (0..self.enemy_count).for_each(|i| {
+                self.draw_enemy_tank(i);
+            });
+
+            let fig = self.tank.figure;
+            self.tank
+                .move_(&direction, |x, y, _| self.screen.collides(x, y, &fig), true);
 
             self.tank.move_missiles();
             self.update_enemies();
             self.check_collisions();
 
-            self.screen.clear();
             self.draw_tank();
             for i in 0..self.enemy_count {
                 self.draw_enemy_tank(i);
@@ -531,6 +746,7 @@ impl Game for TanksGame {
             if step >= round - speedup {
                 self.ai();
                 step = 0;
+                round += 1;
             }
             step += 1;
 

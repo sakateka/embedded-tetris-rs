@@ -1,4 +1,5 @@
 use crate::figure::Figure;
+use defmt::Format;
 use embassy_time::Instant;
 use smart_leds::RGB8;
 
@@ -83,7 +84,7 @@ impl Prng {
 }
 
 // Point/Dot structure for coordinates
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Format, PartialEq)]
 pub(crate) struct Dot {
     pub x: i8,
     pub y: i8,
@@ -124,12 +125,19 @@ impl Dot {
         (self.x + other.x) == 0 && (self.y + other.y) == 0
     }
 
-    fn _opposite(&self) -> Dot {
+    pub fn _opposite(&self) -> Dot {
         Dot::new(-self.x, -self.y)
     }
 
-    fn _outside(&self) -> bool {
+    pub fn _outside(&self) -> bool {
         self.x < 0 || self.x >= SCREEN_WIDTH as i8 || self.y < 0 || self.y >= SCREEN_HEIGHT as i8
+    }
+
+    pub fn to_direction(mut self) -> Dot {
+        if self.x != 0 && self.y != 0 {
+            self.x = 0;
+        }
+        Dot::new(self.x.signum(), self.y.signum())
     }
 }
 

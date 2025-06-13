@@ -141,31 +141,31 @@ pub const TETRAMINO: Tetramino = Tetramino::new([
         data: 0b11_11,
         wh: 2 << 4 | 2,
     },
-    // T: ###
-    //      #
+    // T:  #
+    //    ###
     Figure {
         data: 0b111_010,
+        wh: 3 << 4 | 2,
+    },
+    // Z:  ##
+    //      ##
+    Figure {
+        data: 0b011_110,
         wh: 3 << 4 | 2,
     },
     // S:  ##
     //    ##
     Figure {
-        data: 0b011_110,
-        wh: 3 << 4 | 2,
-    },
-    // Z: ##
-    //     ##
-    Figure {
         data: 0b110_011,
         wh: 3 << 4 | 2,
     },
-    // J: #
-    //   ###
+    // L: #
+    //    ###
     Figure {
         data: 0b100_111,
         wh: 3 << 4 | 2,
     },
-    // L:   #
+    // J:    #
     //     ###
     Figure {
         data: 0b001_111,
@@ -173,10 +173,10 @@ pub const TETRAMINO: Tetramino = Tetramino::new([
     },
 ]);
 
-//  #
-// ###
-// # #
+// ##
+//  ##
+// ##
 pub const TANK: Figure = Figure {
-    data: 0b_010_111_101,
+    data: 0b_110_011_110,
     wh: 3 << 4 | 3,
 };

@@ -174,15 +174,9 @@ impl Game for SnakeGame {
             // Handle joystick input
             let x = joystick.read_x().await;
             let y = joystick.read_y().await;
+            let new_dir = Dot::new(x, y).to_direction();
 
-            if x != 0 || y != 0 {
-                // Prioritize horizontal movement over vertical
-                let new_dir = if x != 0 {
-                    Dot::new(x, 0)
-                } else {
-                    Dot::new(0, y)
-                };
-
+            if !new_dir.is_zero() {
                 if !new_dir.is_opposite(&self.direction) {
                     // If pressing same direction as current movement, speed up
                     if new_dir.x == self.direction.x && new_dir.y == self.direction.y {
