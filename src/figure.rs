@@ -180,3 +180,42 @@ pub const TANK: Figure = Figure {
     data: 0b_110_011_110,
     wh: 3 << 4 | 3,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotated() {
+        // FOUR:
+        // # #
+        // # #
+        // ###
+        //   #
+        //   #
+        let four = Figure {
+            data: 0b101_101_111_001_001,
+            wh: 3 << 4 | 5,
+        };
+
+        // ROTATED_FOUR:
+        //   ###
+        //   #
+        // #####
+        let rotated_four = Figure {
+            data: 0b00111_00100_11111,
+            wh: 5 << 4 | 3,
+        };
+
+        let rotated = four.rotate();
+        assert_eq!(
+            rotated.data,
+            rotated_four.data,
+            "\nEXPECTED:\n{}'{}'\nACTUAL:\n'{}'",
+            rotated_four.str(),
+            rotated_four.data,
+            rotated.str(),
+        );
+        assert_eq!(rotated.wh, rotated_four.wh);
+    }
+}

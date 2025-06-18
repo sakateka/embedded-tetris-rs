@@ -8,8 +8,6 @@ use crate::figure::Figure;
 //  0 1 0  -> 010
 //  0 1 0  -> 010
 //  0 1 0  -> 010
-// Total: 010110010010010 = 0x5924
-
 const DIGITS_DATA: [Figure; 10] = [
     // 0: ###
     //    # #
@@ -17,7 +15,7 @@ const DIGITS_DATA: [Figure; 10] = [
     //    # #
     //    ###
     Figure {
-        data: 0b111_101_101_101_111, // 0x7B6F
+        data: 0b111_101_101_101_111,
         wh: 3 << 4 | 5,
     },
     // 1:  #
@@ -26,7 +24,7 @@ const DIGITS_DATA: [Figure; 10] = [
     //     #
     //     #
     Figure {
-        data: 0b010_110_010_010_010, // 0x24A2
+        data: 0b010_110_010_010_010,
         wh: 3 << 4 | 5,
     },
     // 2: ###
@@ -35,7 +33,7 @@ const DIGITS_DATA: [Figure; 10] = [
     //    #
     //    ###
     Figure {
-        data: 0b111_001_111_100_111, // 0x4E4F
+        data: 0b111_001_111_100_111,
         wh: 3 << 4 | 5,
     },
     // 3: ###
@@ -44,7 +42,7 @@ const DIGITS_DATA: [Figure; 10] = [
     //      #
     //    ###
     Figure {
-        data: 0b111_001_111_001_111, // 0x4E4E
+        data: 0b111_001_111_001_111,
         wh: 3 << 4 | 5,
     },
     // 4: # #
@@ -53,7 +51,7 @@ const DIGITS_DATA: [Figure; 10] = [
     //      #
     //      #
     Figure {
-        data: 0b101_101_111_001_001, // 0x4E10
+        data: 0b101_101_111_001_001,
         wh: 3 << 4 | 5,
     },
     // 5: ###
@@ -62,7 +60,7 @@ const DIGITS_DATA: [Figure; 10] = [
     //      #
     //    ###
     Figure {
-        data: 0b111_100_111_001_111, // 0x4F4E
+        data: 0b111_100_111_001_111,
         wh: 3 << 4 | 5,
     },
     // 6: ###
@@ -71,7 +69,7 @@ const DIGITS_DATA: [Figure; 10] = [
     //    # #
     //    ###
     Figure {
-        data: 0b111_100_111_101_111, // 0x4F6F
+        data: 0b111_100_111_101_111,
         wh: 3 << 4 | 5,
     },
     // 7: ###
@@ -80,7 +78,7 @@ const DIGITS_DATA: [Figure; 10] = [
     //      #
     //      #
     Figure {
-        data: 0b111_001_001_001_001, // 0x4E00
+        data: 0b111_001_001_001_001,
         wh: 3 << 4 | 5,
     },
     // 8: ###
@@ -89,7 +87,7 @@ const DIGITS_DATA: [Figure; 10] = [
     //    # #
     //    ###
     Figure {
-        data: 0b111_101_111_101_111, // 0x7B6F
+        data: 0b111_101_111_101_111,
         wh: 3 << 4 | 5,
     },
     // 9: ###
@@ -98,7 +96,7 @@ const DIGITS_DATA: [Figure; 10] = [
     //      #
     //    ###
     Figure {
-        data: 0b111_101_111_001_111, // 0x7B4E
+        data: 0b111_101_111_001_111,
         wh: 3 << 4 | 5,
     },
 ];
@@ -126,38 +124,39 @@ impl core::ops::Index<usize> for Digits {
 
 pub const DIGITS: Digits = Digits::new(DIGITS_DATA);
 
-/*
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
 
     #[test]
     fn test_digit_one_pattern() {
         let one = &DIGITS.0[1];
         // Verify the pattern matches the ASCII art
-        // First row: single pixel on right
-        assert_eq!(one.get_bit(2, 0), true);
-        assert_eq!(one.get_bit(1, 0), false);
+        // First row: single pixel on center
+        // data: 0b010_110_010_010_010,
         assert_eq!(one.get_bit(0, 0), false);
+        assert_eq!(one.get_bit(1, 0), true);
+        assert_eq!(one.get_bit(2, 0), false);
 
-        // Second row: two pixels on right
-        assert_eq!(one.get_bit(2, 1), true);
+        // Second row: two pixels on left and center
+        assert_eq!(one.get_bit(0, 1), true);
         assert_eq!(one.get_bit(1, 1), true);
-        assert_eq!(one.get_bit(0, 1), false);
+        assert_eq!(one.get_bit(2, 1), false);
 
-        // Third row: single pixel on right
-        assert_eq!(one.get_bit(2, 2), true);
-        assert_eq!(one.get_bit(1, 2), false);
+        // Third row: single pixel on center
         assert_eq!(one.get_bit(0, 2), false);
+        assert_eq!(one.get_bit(1, 2), true);
+        assert_eq!(one.get_bit(2, 2), false);
 
-        // Fourth row: single pixel on right
-        assert_eq!(one.get_bit(2, 3), true);
-        assert_eq!(one.get_bit(1, 3), false);
+        // Fourth row: single pixel on center
+        assert_eq!(one.get_bit(2, 3), false);
+        assert_eq!(one.get_bit(1, 3), true);
         assert_eq!(one.get_bit(0, 3), false);
 
-        // Fifth row: single pixel on right
-        assert_eq!(one.get_bit(2, 4), true);
-        assert_eq!(one.get_bit(1, 4), false);
+        // Fifth row: single pixel on center
+        assert_eq!(one.get_bit(2, 4), false);
+        assert_eq!(one.get_bit(1, 4), true);
         assert_eq!(one.get_bit(0, 4), false);
     }
 
@@ -195,4 +194,3 @@ mod tests {
         }
     }
 }
-*/

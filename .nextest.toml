@@ -1,0 +1,12 @@
+[profile.default]
+# Only run library tests, not binary tests
+test-targets = ["lib"]
+
+# Use host target for tests
+target = "x86_64-unknown-linux-gnu"
+
+# Show output for failing tests
+failure-output = "immediate"
+
+# Show slow tests
+slow-timeout = { period = "5s", terminate-after = 2 }

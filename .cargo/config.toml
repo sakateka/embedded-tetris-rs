@@ -6,3 +6,7 @@ target = "thumbv6m-none-eabi"        # Cortex-M0 and Cortex-M0+
 
 [env]
 DEFMT_LOG = "debug"
+
+# Use nextest for testing
+[alias]
+t = "nextest run --lib --target x86_64-unknown-linux-gnu"

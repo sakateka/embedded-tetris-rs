@@ -3,6 +3,9 @@ name = "tetris-rs"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "tetris_rs"
+
 [[bin]]
 name = "tetris-rs"
 test = false
