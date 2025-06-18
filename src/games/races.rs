@@ -1,14 +1,13 @@
-use embassy_rp::pio_programs::ws2812::PioWs2812;
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::Timer;
 use smart_leds::RGB8;
 
 use crate::{
     common::{
-        Dot, FrameBuffer, Prng, BLACK_IDX, BLUE_IDX, BRICK_IDX, DARK_GREEN_IDX, GREEN_IDX,
-        PINK_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
+        Dot, FrameBuffer, GameController, LedDisplay, Prng, BLACK_IDX, BLUE_IDX, BRICK_IDX,
+        DARK_GREEN_IDX, GREEN_IDX, PINK_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
     },
     digits::DIGITS,
-    Game, Joystick,
+    Game,
 };
 
 static ROAD_UPDATE_STEP_SIZE: u8 = 10;
@@ -37,8 +36,7 @@ pub struct RacesGame {
 }
 
 impl RacesGame {
-    pub fn new() -> Self {
-        let prng = Prng::new();
+    pub fn new(prng: Prng) -> Self {
         let mut game = Self {
             screen: FrameBuffer::new(),
             update_step: 0,
@@ -426,28 +424,27 @@ impl RacesGame {
         }
     }
 
-    async fn game_over(
-        &mut self,
-        mut leds: [RGB8; 256],
-        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
-        joystick: &mut Joystick<'_>,
-    ) {
+    async fn game_over<D, C>(&mut self, mut leds: [RGB8; 256], display: &mut D, controller: &mut C)
+    where
+        D: LedDisplay,
+        C: GameController,
+    {
         // Flash screen
         for _ in 0..3 {
             self.screen.clear();
             self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
-            Timer::after(Duration::from_millis(200)).await;
+            display.write(&leds).await;
+            Timer::after_millis(200).await;
 
             self.draw_score();
             self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
-            Timer::after(Duration::from_millis(200)).await;
+            display.write(&leds).await;
+            Timer::after_millis(200).await;
         }
 
         // Wait for button press
-        while !joystick.was_pressed() {
-            Timer::after(Duration::from_millis(50)).await;
+        while !controller.was_pressed() {
+            Timer::after_millis(50).await;
         }
     }
 
@@ -465,17 +462,16 @@ impl RacesGame {
 }
 
 impl Game for RacesGame {
-    async fn run(
-        &mut self,
-        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
-        joystick: &mut Joystick<'_>,
-    ) {
+    async fn run<D, C>(&mut self, display: &mut D, controller: &mut C)
+    where
+        D: LedDisplay,
+        C: GameController,
+    {
         let mut leds = [RGB8::new(0, 0, 0); 256];
-        let mut ticker = Ticker::every(Duration::from_millis(20));
 
         loop {
             // Fire bullet on button press
-            if joystick.was_pressed()
+            if controller.was_pressed()
                 && self.bullet_count < self.bullets.len()
                 && self.max_bullets > 0
             {
@@ -487,8 +483,8 @@ impl Game for RacesGame {
             self.spawn_obstacles();
             self.spawn_bullet_powerup();
             // Handle joystick input
-            let x = joystick.read_x().await;
-            let y = joystick.read_y().await;
+            let x = controller.read_x().await;
+            let y = controller.read_y().await;
 
             if self.can_move_car_horizontally() {
                 // Move car horizontally
@@ -523,7 +519,7 @@ impl Game for RacesGame {
 
             // Check game over
             if self.lives == 0 {
-                self.game_over(leds, ws2812, joystick).await;
+                self.game_over(leds, display, controller).await;
                 break;
             }
 
@@ -539,9 +535,9 @@ impl Game for RacesGame {
 
             // Update display
             self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
+            display.write(&leds).await;
 
-            ticker.next().await;
+            Timer::after_millis(20).await;
         }
     }
 }

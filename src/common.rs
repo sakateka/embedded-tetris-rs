@@ -65,8 +65,7 @@ pub(crate) struct Prng {
 }
 
 impl Prng {
-    pub fn new() -> Self {
-        let seed = Instant::now().as_ticks() as u32;
+    pub fn new(seed: u32) -> Self {
         Self { state: seed }
     }
 
@@ -259,4 +258,26 @@ impl FrameBuffer {
         }
         true
     }
+}
+
+// Abstract interfaces for game hardware - using generics instead of dyn traits
+
+/// Trait for LED display functionality
+pub trait LedDisplay {
+    async fn write(&mut self, leds: &[smart_leds::RGB8]);
+}
+
+/// Trait for game controller functionality (joystick + button)
+pub trait GameController {
+    async fn read_x(&mut self) -> i8;
+    async fn read_y(&mut self) -> i8;
+    fn was_pressed(&self) -> bool;
+}
+
+/// Game trait for different game implementations - using generics to avoid dyn issues
+pub trait Game {
+    async fn run<D, C>(&mut self, display: &mut D, controller: &mut C)
+    where
+        D: LedDisplay,
+        C: GameController;
 }

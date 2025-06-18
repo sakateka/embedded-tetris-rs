@@ -1,13 +1,11 @@
-use defmt::info;
-use embassy_rp::pio_programs::ws2812::PioWs2812;
-use embassy_time::{Duration, Ticker};
+use embassy_time::Timer;
 use smart_leds::RGB8;
 
 use crate::{
-    common::{COLORS, GREEN_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH},
+    common::{GameController, LedDisplay, COLORS, GREEN_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH},
     digits::DIGITS,
     figure::{Figure, TANK},
-    Dot, FrameBuffer, Game, Joystick, Prng,
+    Dot, FrameBuffer, Game, Prng,
 };
 
 #[derive(Clone, Copy)]
@@ -100,7 +98,6 @@ impl Tank {
         {
             let pos = self.pos.move_by(*direction);
             if !collides(pos.x, pos.y, &self.figure) {
-                info!("set new pos {:?}", pos);
                 self.pos = pos;
             }
         }
@@ -168,7 +165,7 @@ impl TanksGame {
     const STAGE_FIRE: u8 = 3;
     const STAGE_NONE: u8 = 4;
 
-    pub fn new() -> Self {
+    pub fn new(prng: Prng) -> Self {
         Self {
             screen: FrameBuffer::new(),
             tank: Tank::new(Dot::new(3, 16), -1),
@@ -176,7 +173,7 @@ impl TanksGame {
             enemy_count: 0,
             score: 0,
             lives: 3,
-            prng: Prng::new(),
+            prng,
         }
     }
 
@@ -676,31 +673,28 @@ impl TanksGame {
         }
     }
 
-    async fn game_over(
-        &mut self,
-        mut leds: [RGB8; 256],
-        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
-        joystick: &mut Joystick<'_>,
-    ) {
-        while !joystick.was_pressed() {
+    async fn game_over<D, C>(&mut self, mut leds: [RGB8; 256], display: &mut D, controller: &mut C)
+    where
+        D: LedDisplay,
+        C: GameController,
+    {
+        while !controller.was_pressed() {
             let x = self.prng.next_range(SCREEN_WIDTH as u8);
             let y = self.prng.next_range(SCREEN_HEIGHT as u8);
             let color = self.prng.next_range(COLORS.len() as u8);
             self.screen.set(x as usize, y as usize, color);
             self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
+            display.write(&leds).await;
         }
-        info!("game over return");
     }
 }
 
 impl Game for TanksGame {
-    async fn run(
-        &mut self,
-        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
-        joystick: &mut Joystick<'_>,
-    ) {
-        let mut ticker = Ticker::every(Duration::from_millis(100));
+    async fn run<D, C>(&mut self, display: &mut D, controller: &mut C)
+    where
+        D: LedDisplay,
+        C: GameController,
+    {
         let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
         let mut step = 10;
@@ -709,16 +703,16 @@ impl Game for TanksGame {
         loop {
             self.screen.clear();
             if self.tank.is_dead() {
-                self.game_over(leds, ws2812, joystick).await;
+                self.game_over(leds, display, controller).await;
                 return;
             }
 
-            if joystick.was_pressed() {
+            if controller.was_pressed() {
                 self.tank.fire();
             }
 
-            let x_input = joystick.read_x().await;
-            let y_input = joystick.read_y().await;
+            let x_input = controller.read_x().await;
+            let y_input = controller.read_y().await;
             let direction = Dot::new(x_input, y_input).to_direction();
 
             (0..self.enemy_count).for_each(|i| {
@@ -751,8 +745,8 @@ impl Game for TanksGame {
             step += 1;
 
             self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
-            ticker.next().await;
+            display.write(&leds).await;
+            Timer::after_millis(100).await;
         }
     }
 }

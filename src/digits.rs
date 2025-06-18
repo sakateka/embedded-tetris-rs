@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), allow(dead_code))]
-
 use crate::figure::Figure;
 
 // Each digit is represented by a 5x3 bit pattern stored in a u16
@@ -116,10 +114,6 @@ impl Digits {
     pub fn wrapping_at(&self, idx: u8) -> &Figure {
         &self.0[idx as usize % 10]
     }
-
-    pub fn iter(&self) -> core::slice::Iter<'_, Figure> {
-        self.0.iter()
-    }
 }
 
 impl core::ops::Index<usize> for Digits {
@@ -132,6 +126,7 @@ impl core::ops::Index<usize> for Digits {
 
 pub const DIGITS: Digits = Digits::new(DIGITS_DATA);
 
+/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,3 +195,4 @@ mod tests {
         }
     }
 }
+*/

@@ -1,14 +1,17 @@
 #![no_std]
 #![no_main]
 
+use crate::control::ButtonController;
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::adc::InterruptHandler as AdcInterruptHandler;
+use embassy_rp::adc::{Adc, Channel, Config};
 use embassy_rp::bind_interrupts;
+use embassy_rp::gpio::{Input, Pull};
 use embassy_rp::peripherals::PIO0;
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 use games::snake::SnakeGame;
 use games::tetris::TetrisGame;
 use smart_leds::RGB8;
@@ -21,13 +24,8 @@ mod figure;
 mod games;
 
 use common::*;
-use control::Joystick;
+use control::{button_task, Joystick};
 use games::{races::RacesGame, tanks::TanksGame};
-
-bind_interrupts!(struct Irqs {
-    PIO0_IRQ_0 => InterruptHandler<PIO0>;
-    ADC_IRQ_FIFO => AdcInterruptHandler;
-});
 
 //  Coordinates
 //        x
@@ -43,13 +41,15 @@ bind_interrupts!(struct Irqs {
 //     |       | @ |<---- joystick
 //   31+-------+---+
 
-// Game trait for different game implementations
-trait Game {
-    async fn run(
-        &mut self,
-        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
-        joystick: &mut Joystick<'_>,
-    );
+// Implement LedDisplay directly for PioWs2812
+impl LedDisplay for PioWs2812<'_, PIO0, 0, 256> {
+    async fn write(&mut self, leds: &[RGB8]) {
+        // Convert slice to fixed array for ws2812
+        if leds.len() >= 256 {
+            let array: &[RGB8; 256] = &leds[..256].try_into().unwrap();
+            self.write(array).await;
+        }
+    }
 }
 
 // Game title graphics (converted from Python GAMES array)
@@ -121,8 +121,13 @@ fn framebuffer_from_rows(rows: &[u32; 8], color: u8) -> FrameBuffer {
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("Starting game collection!");
-    let p = embassy_rp::init(Default::default());
 
+    bind_interrupts!(struct Irqs {
+        PIO0_IRQ_0 => InterruptHandler<PIO0>;
+        ADC_IRQ_FIFO => AdcInterruptHandler;
+    });
+
+    let p = embassy_rp::init(Default::default());
     // Initialize PIO for WS2812
     let Pio {
         mut common, sm0, ..
@@ -131,7 +136,18 @@ async fn main(spawner: Spawner) {
     let program = PioWs2812Program::new(&mut common);
     let mut ws2812 = PioWs2812::new(&mut common, sm0, p.DMA_CH0, p.PIN_13, &program);
 
-    let mut joystick = Joystick::new(spawner, p.ADC, p.PIN_16, p.PIN_27, p.PIN_28);
+    // Initialize ADC for joystick input (Pins 27 and 28)
+    let adc_reader = Adc::new(p.ADC, Irqs, Config::default());
+    let adc_pin_x = Channel::new_pin(p.PIN_27, Pull::None);
+    let adc_pin_y = Channel::new_pin(p.PIN_28, Pull::None);
+    // Initialize button (Pin 16)
+    let button_pin = Input::new(p.PIN_16, Pull::Up);
+    let button_controller = ButtonController::new(button_pin);
+
+    // Spawn button task
+    spawner.spawn(button_task(button_controller)).unwrap();
+
+    let mut joystick = Joystick::new(adc_reader, adc_pin_x, adc_pin_y);
     let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
     // Game menu
@@ -148,25 +164,27 @@ async fn main(spawner: Spawner) {
         }
 
         if joystick.was_pressed() {
+            let seed = Instant::now().as_ticks() as u32;
+            let prng = common::Prng::new(seed);
             match game_idx {
                 0 => {
                     info!("Starting Tetris");
-                    let mut tetris = TetrisGame::new();
+                    let mut tetris = TetrisGame::new(prng);
                     tetris.run(&mut ws2812, &mut joystick).await;
                 }
                 1 => {
                     info!("Starting Snake");
-                    let mut snake = SnakeGame::new();
+                    let mut snake = SnakeGame::new(prng);
                     snake.run(&mut ws2812, &mut joystick).await;
                 }
                 2 => {
                     info!("Starting Tanks");
-                    let mut tanks = TanksGame::new();
+                    let mut tanks = TanksGame::new(prng);
                     tanks.run(&mut ws2812, &mut joystick).await;
                 }
                 3 => {
                     info!("Starting Races");
-                    let mut races = RacesGame::new();
+                    let mut races = RacesGame::new(prng);
                     races.run(&mut ws2812, &mut joystick).await;
                 }
                 _ => {}

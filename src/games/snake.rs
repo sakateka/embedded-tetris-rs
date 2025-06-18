@@ -1,11 +1,10 @@
-use embassy_rp::pio_programs::ws2812::PioWs2812;
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::Timer;
 use smart_leds::RGB8;
 
 use crate::{
-    common::{GREEN_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH},
+    common::{GameController, LedDisplay, GREEN_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH},
     digits::DIGITS,
-    Dot, FrameBuffer, Game, Joystick, Prng,
+    Dot, FrameBuffer, Game, Prng,
 };
 
 pub struct SnakeGame {
@@ -19,8 +18,7 @@ pub struct SnakeGame {
 }
 
 impl SnakeGame {
-    pub fn new() -> Self {
-        let prng = Prng::new();
+    pub fn new(prng: Prng) -> Self {
         let mut game = Self {
             body: [Dot::new(0, 0); 256],
             body_len: 3,
@@ -131,47 +129,45 @@ impl SnakeGame {
         }
     }
 
-    async fn game_over(
-        &mut self,
-        mut leds: [RGB8; 256],
-        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
-        joystick: &mut Joystick<'_>,
-    ) {
+    async fn game_over<D, C>(&mut self, mut leds: [RGB8; 256], display: &mut D, controller: &mut C)
+    where
+        D: LedDisplay,
+        C: GameController,
+    {
         // Flash screen
         for _ in 0..3 {
             self.screen.clear();
             self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
-            Timer::after(Duration::from_millis(200)).await;
+            display.write(&leds).await;
+            Timer::after_millis(200).await;
 
             self.draw_snake();
             self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
-            Timer::after(Duration::from_millis(200)).await;
+            display.write(&leds).await;
+            Timer::after_millis(200).await;
         }
 
         // Wait for button press
-        while !joystick.was_pressed() {
-            Timer::after(Duration::from_millis(50)).await;
+        while !controller.was_pressed() {
+            Timer::after_millis(50).await;
         }
     }
 }
 
 impl Game for SnakeGame {
-    async fn run(
-        &mut self,
-        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
-        joystick: &mut Joystick<'_>,
-    ) {
+    async fn run<D, C>(&mut self, display: &mut D, controller: &mut C)
+    where
+        D: LedDisplay,
+        C: GameController,
+    {
         let mut leds = [RGB8::new(0, 0, 0); 256];
-        let mut ticker = Ticker::every(Duration::from_millis(20));
         let mut step = 30;
         let mut speedup = 1;
 
         loop {
             // Handle joystick input
-            let x = joystick.read_x().await;
-            let y = joystick.read_y().await;
+            let x = controller.read_x().await;
+            let y = controller.read_y().await;
             let new_dir = Dot::new(x, y).to_direction();
 
             if !new_dir.is_zero() {
@@ -191,17 +187,17 @@ impl Game for SnakeGame {
                 step = 0;
                 // Move snake
                 if !self.move_forward() {
-                    self.game_over(leds, ws2812, joystick).await;
+                    self.game_over(leds, display, controller).await;
                     break;
                 }
 
                 // Draw and update display
                 self.draw_snake();
                 self.screen.render(&mut leds);
-                ws2812.write(&leds).await;
+                display.write(&leds).await;
             }
             step += speedup;
-            ticker.next().await;
+            Timer::after_millis(20).await;
         }
     }
 }

@@ -1,11 +1,8 @@
-use embassy_executor::Spawner;
-use embassy_rp::adc::{Adc, Channel, Config};
-use embassy_rp::gpio::{Input, Pull};
+use embassy_rp::adc::{Adc, Channel};
+use embassy_rp::gpio::Input;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 // use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
-
-use crate::Irqs;
 
 static BUTTON_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 // static BUTTON_STATE: Mutex<CriticalSectionRawMutex, bool> = Mutex::new(false);
@@ -42,7 +39,7 @@ fn button_was_pressed() -> bool {
 }
 
 #[embassy_executor::task]
-async fn button_task(mut button_controller: ButtonController) {
+pub async fn button_task(mut button_controller: ButtonController) {
     button_controller.run().await;
 }
 
@@ -55,24 +52,10 @@ pub struct Joystick<'a> {
 
 impl<'a> Joystick<'a> {
     pub fn new(
-        spawner: Spawner,
-        adc: embassy_rp::peripherals::ADC,
-        pin16: embassy_rp::peripherals::PIN_16,
-        pin27: embassy_rp::peripherals::PIN_27,
-        pin28: embassy_rp::peripherals::PIN_28,
+        adc_reader: embassy_rp::adc::Adc<'a, embassy_rp::adc::Async>,
+        adc_pin_x: embassy_rp::adc::Channel<'a>,
+        adc_pin_y: embassy_rp::adc::Channel<'a>,
     ) -> Self {
-        // Initialize ADC for joystick input (Pins 27 and 28)
-        let adc_reader = Adc::new(adc, Irqs, Config::default());
-        let adc_pin_x = Channel::new_pin(pin27, Pull::None);
-        let adc_pin_y = Channel::new_pin(pin28, Pull::None);
-
-        // Initialize button (Pin 16)
-        let button_pin = Input::new(pin16, Pull::Up);
-        let button_controller = ButtonController::new(button_pin);
-
-        // Spawn button task
-        spawner.spawn(button_task(button_controller)).unwrap();
-
         Self {
             adc: adc_reader,
             pin_x: adc_pin_x,
@@ -100,5 +83,20 @@ impl<'a> Joystick<'a> {
 
     pub fn was_pressed(&self) -> bool {
         button_was_pressed()
+    }
+}
+
+// Implement the GameController trait for Joystick
+impl<'a> crate::common::GameController for Joystick<'a> {
+    async fn read_x(&mut self) -> i8 {
+        self.read_x().await
+    }
+
+    async fn read_y(&mut self) -> i8 {
+        self.read_y().await
+    }
+
+    fn was_pressed(&self) -> bool {
+        self.was_pressed()
     }
 }

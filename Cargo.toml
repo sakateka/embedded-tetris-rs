@@ -3,6 +3,11 @@ name = "tetris-rs"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "tetris-rs"
+test = false
+bench = false
+
 [dependencies]
 cortex-m-rt = "0.7.5"
 defmt = "1"

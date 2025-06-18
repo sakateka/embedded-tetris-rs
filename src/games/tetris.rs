@@ -1,16 +1,14 @@
-use embassy_rp::pio_programs::ws2812::PioWs2812;
 use embassy_time::Timer;
 use smart_leds::RGB8;
 
 use crate::{
     common::{
-        BLACK_IDX, BLUE_IDX, BRICK_IDX, GREEN_IDX, LIGHT_BLUE_IDX, PINK_IDX, RED_IDX,
-        SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
+        Game, GameController, LedDisplay, BLACK_IDX, BLUE_IDX, BRICK_IDX, GREEN_IDX,
+        LIGHT_BLUE_IDX, PINK_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
     },
-    control::Joystick,
     digits::DIGITS,
     figure::{Figure, TETRAMINO},
-    Dot, FrameBuffer, Game, Prng,
+    Dot, FrameBuffer, Prng,
 };
 
 pub struct TetrisGame {
@@ -24,7 +22,7 @@ pub struct TetrisGame {
 }
 
 impl TetrisGame {
-    pub fn new() -> Self {
+    pub fn new(prng: Prng) -> Self {
         Self {
             screen: FrameBuffer::new(),
             concrete: FrameBuffer::new(),
@@ -32,7 +30,7 @@ impl TetrisGame {
             init_x: 3,
             init_y: 6,
             next_visible_y: 11,
-            prng: Prng::new(),
+            prng,
         }
     }
 
@@ -81,9 +79,9 @@ impl TetrisGame {
         (cleared_rows, count)
     }
 
-    async fn animate_concrete_shift(
+    async fn animate_concrete_shift<D: LedDisplay>(
         &mut self,
-        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
+        display: &mut D,
         cleared_rows: &[usize],
         count: usize,
     ) {
@@ -114,7 +112,7 @@ impl TetrisGame {
                 self.screen.copy_from(&self.concrete);
                 self.draw_score();
                 self.screen.render(&mut leds);
-                ws2812.write(&leds).await;
+                display.write(&leds).await;
                 Timer::after_millis(50).await;
 
                 if from_idx == 0 {
@@ -137,19 +135,19 @@ impl TetrisGame {
         self.screen.copy_from(&self.concrete);
         self.draw_score();
         self.screen.render(&mut leds);
-        ws2812.write(&leds).await;
+        display.write(&leds).await;
     }
 
-    async fn game_over(
+    async fn game_over<D: LedDisplay, C: GameController>(
         &mut self,
         mut leds: [RGB8; 256],
-        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
-        joystick: &mut Joystick<'_>,
+        display: &mut D,
+        controller: &mut C,
         last_pos: Dot,
         last_figure: &Figure,
         last_color: u8,
     ) {
-        while !joystick.was_pressed() {
+        while !controller.was_pressed() {
             // Preserve the concrete blocks and score
             self.screen.copy_from(&self.concrete);
             self.draw_score();
@@ -158,25 +156,25 @@ impl TetrisGame {
             self.screen
                 .draw_figure(last_pos.x, last_pos.y - 1, last_figure, last_color);
             self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
+            display.write(&leds).await;
             Timer::after_millis(500).await;
 
             // Clear only the last tetramino
             self.screen
                 .draw_figure(last_pos.x, last_pos.y - 1, last_figure, BLACK_IDX);
             self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
+            display.write(&leds).await;
             Timer::after_millis(500).await;
         }
     }
 }
 
 impl Game for TetrisGame {
-    async fn run(
-        &mut self,
-        ws2812: &mut PioWs2812<'_, embassy_rp::peripherals::PIO0, 0, 256>,
-        joystick: &mut Joystick<'_>,
-    ) {
+    async fn run<D, C>(&mut self, display: &mut D, controller: &mut C)
+    where
+        D: LedDisplay,
+        C: GameController,
+    {
         let mut x = self.init_x;
         let mut y = self.init_y;
         let mut ipass = 0;
@@ -194,7 +192,7 @@ impl Game for TetrisGame {
             }
 
             // Read joystick
-            let x_diff = joystick.read_x().await;
+            let x_diff = controller.read_x().await;
             let new_x = x + x_diff;
 
             if new_x >= 0 && new_x < SCREEN_WIDTH as i8 && !self.concrete.collides(new_x, y, &curr)
@@ -202,7 +200,7 @@ impl Game for TetrisGame {
                 x = new_x;
             }
 
-            if joystick.was_pressed() {
+            if controller.was_pressed() {
                 let rotated = curr.rotate();
                 let shift = if rotated.height() > rotated.width()
                     && x + rotated.width() as i8 >= SCREEN_WIDTH as i8
@@ -239,7 +237,7 @@ impl Game for TetrisGame {
                 y = self.init_y + 1;
 
                 if self.concrete.collides(x, y, &curr) {
-                    self.game_over(leds, ws2812, joystick, Dot::new(x, y), &curr, curr_color)
+                    self.game_over(leds, display, controller, Dot::new(x, y), &curr, curr_color)
                         .await;
                     return;
                 }
@@ -254,20 +252,20 @@ impl Game for TetrisGame {
 
                 if count > 0 {
                     // Animate each cleared row separately
-                    self.animate_concrete_shift(ws2812, &cleared_rows, count)
+                    self.animate_concrete_shift(display, &cleared_rows, count)
                         .await;
                 }
             }
 
             self.screen.render(&mut leds);
-            ws2812.write(&leds).await;
+            display.write(&leds).await;
 
             if self.score > 99 {
                 self.score = 0;
             }
 
             let speed_bonus = (self.score / 10).max(1);
-            let y_input = joystick.read_y().await;
+            let y_input = controller.read_y().await;
             let down_bonus = if y_input > 0 { 10 } else { 0 };
 
             ipass += speed_bonus + down_bonus;
