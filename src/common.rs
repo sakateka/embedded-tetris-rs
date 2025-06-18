@@ -1,6 +1,4 @@
 use crate::figure::Figure;
-use defmt::Format;
-use embassy_time::Instant;
 use smart_leds::RGB8;
 
 pub const SCREEN_WIDTH: usize = 8;
@@ -83,7 +81,7 @@ impl Prng {
 }
 
 // Point/Dot structure for coordinates
-#[derive(Copy, Clone, Format, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub(crate) struct Dot {
     pub x: i8,
     pub y: i8,
