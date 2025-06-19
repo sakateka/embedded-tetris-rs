@@ -1,15 +1,13 @@
-use embassy_time::Timer;
 use smart_leds::RGB8;
 
-use crate::{
-    common::{
-        Game, GameController, LedDisplay, BLACK_IDX, BLUE_IDX, BRICK_IDX, GREEN_IDX,
-        LIGHT_BLUE_IDX, PINK_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
-    },
-    digits::DIGITS,
-    figure::{Figure, TETRAMINO},
-    Dot, FrameBuffer, Prng,
+use crate::common::{
+    Dot, FrameBuffer, Game, GameController, LedDisplay, Prng, Timer, BLACK_IDX, BLUE_IDX,
+    BRICK_IDX, GREEN_IDX, LIGHT_BLUE_IDX, PINK_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH,
+    YELLOW_IDX,
 };
+use crate::figure::{Figure, TETRAMINO};
+
+use crate::digits::DIGITS;
 
 pub struct TetrisGame {
     screen: FrameBuffer,
@@ -79,9 +77,10 @@ impl TetrisGame {
         (cleared_rows, count)
     }
 
-    async fn animate_concrete_shift<D: LedDisplay>(
+    async fn animate_concrete_shift<D: LedDisplay, T: Timer>(
         &mut self,
         display: &mut D,
+        timer: &T,
         cleared_rows: &[usize],
         count: usize,
     ) {
@@ -113,7 +112,7 @@ impl TetrisGame {
                 self.draw_score();
                 self.screen.render(&mut leds);
                 display.write(&leds).await;
-                Timer::after_millis(50).await;
+                timer.sleep_millis(50).await;
 
                 if from_idx == 0 {
                     break;
@@ -138,11 +137,12 @@ impl TetrisGame {
         display.write(&leds).await;
     }
 
-    async fn game_over<D: LedDisplay, C: GameController>(
+    async fn game_over<D: LedDisplay, C: GameController, T: Timer>(
         &mut self,
         mut leds: [RGB8; 256],
         display: &mut D,
         controller: &mut C,
+        timer: &T,
         last_pos: Dot,
         last_figure: &Figure,
         last_color: u8,
@@ -157,23 +157,24 @@ impl TetrisGame {
                 .draw_figure(last_pos.x, last_pos.y - 1, last_figure, last_color);
             self.screen.render(&mut leds);
             display.write(&leds).await;
-            Timer::after_millis(500).await;
+            timer.sleep_millis(500).await;
 
             // Clear only the last tetramino
             self.screen
                 .draw_figure(last_pos.x, last_pos.y - 1, last_figure, BLACK_IDX);
             self.screen.render(&mut leds);
             display.write(&leds).await;
-            Timer::after_millis(500).await;
+            timer.sleep_millis(500).await;
         }
     }
 }
 
 impl Game for TetrisGame {
-    async fn run<D, C>(&mut self, display: &mut D, controller: &mut C)
+    async fn run<D, C, T>(&mut self, display: &mut D, controller: &mut C, timer: &T)
     where
         D: LedDisplay,
         C: GameController,
+        T: Timer,
     {
         let mut x = self.init_x;
         let mut y = self.init_y;
@@ -237,8 +238,16 @@ impl Game for TetrisGame {
                 y = self.init_y + 1;
 
                 if self.concrete.collides(x, y, &curr) {
-                    self.game_over(leds, display, controller, Dot::new(x, y), &curr, curr_color)
-                        .await;
+                    self.game_over(
+                        leds,
+                        display,
+                        controller,
+                        timer,
+                        Dot::new(x, y),
+                        &curr,
+                        curr_color,
+                    )
+                    .await;
                     return;
                 }
 
@@ -252,7 +261,7 @@ impl Game for TetrisGame {
 
                 if count > 0 {
                     // Animate each cleared row separately
-                    self.animate_concrete_shift(display, &cleared_rows, count)
+                    self.animate_concrete_shift(display, timer, &cleared_rows, count)
                         .await;
                 }
             }
@@ -269,7 +278,7 @@ impl Game for TetrisGame {
             let down_bonus = if y_input > 0 { 10 } else { 0 };
 
             ipass += speed_bonus + down_bonus;
-            Timer::after_millis(50).await;
+            timer.sleep_millis(50).await;
         }
     }
 }

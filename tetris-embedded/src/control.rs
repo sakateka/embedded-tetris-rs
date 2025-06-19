@@ -1,11 +1,10 @@
+use core::marker::Sized;
 use embassy_rp::adc::{Adc, Channel};
 use embassy_rp::gpio::Input;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-// use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::signal::Signal;
 
 static BUTTON_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
-// static BUTTON_STATE: Mutex<CriticalSectionRawMutex, bool> = Mutex::new(false);
 
 pub struct ButtonController {
     button: Input<'static>,
@@ -87,7 +86,7 @@ impl<'a> Joystick<'a> {
 }
 
 // Implement the GameController trait for Joystick
-impl<'a> crate::common::GameController for Joystick<'a> {
+impl<'a> tetris_lib::common::GameController for Joystick<'a> {
     async fn read_x(&mut self) -> i8 {
         self.read_x().await
     }

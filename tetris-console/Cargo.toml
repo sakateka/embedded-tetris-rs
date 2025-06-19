@@ -1,0 +1,11 @@
+[package]
+name = "tetris-console"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tetris-lib = { path = "../tetris-lib" }
+tokio = { version = "1.0", features = ["full"] }
+smart-leds = "0.4.0"
+libc = "0.2"
+ctrlc = "3.0"

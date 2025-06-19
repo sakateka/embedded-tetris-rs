@@ -1,0 +1,20 @@
+[package]
+name = "tetris-embedded"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+# This makes the embedded crate independent from the main workspace
+
+[dependencies]
+tetris-lib = { path = "../tetris-lib" }
+embassy-executor = { version = "0.7.0", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt", "task-arena-size-8192"] }
+embassy-rp = { version = "0.4.0", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp2040"] }
+embassy-sync = { version = "0.7.0", features = ["defmt"] }
+embassy-time = { version = "0.4.0", features = ["defmt", "defmt-timestamp-uptime"] }
+defmt = "1"
+defmt-rtt = "1"
+panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.5"
+smart-leds = "0.4.0" 

@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
+use core::default::Default;
 use no_std_strings::str32;
 use smart_leds::RGB8;
 

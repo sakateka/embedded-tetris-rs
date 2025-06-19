@@ -1,3 +1,5 @@
+use core::default::Default;
+
 use crate::figure::Figure;
 
 // Each digit is represented by a 5x3 bit pattern stored in a u16

@@ -57,8 +57,13 @@ impl ColorsIndexer for ColorsType {
     }
 }
 
+// Timer abstraction trait
+pub trait Timer {
+    async fn sleep_millis(&self, millis: u64);
+}
+
 // Simple PRNG implementation
-pub(crate) struct Prng {
+pub struct Prng {
     state: u32,
 }
 
@@ -82,7 +87,7 @@ impl Prng {
 
 // Point/Dot structure for coordinates
 #[derive(Copy, Clone, PartialEq)]
-pub(crate) struct Dot {
+pub struct Dot {
     pub x: i8,
     pub y: i8,
 }
@@ -149,7 +154,7 @@ fn set_pixel(leds: &mut [RGB8], x: usize, y: usize, color_idx: u8) {
     }
 }
 
-pub(crate) struct FrameBuffer {
+pub struct FrameBuffer {
     content: [u8; SCREEN_SIZE],
 }
 
@@ -225,11 +230,10 @@ impl FrameBuffer {
     }
 
     pub fn render(&self, leds: &mut [RGB8]) {
-        for x in 0..SCREEN_WIDTH {
-            for y in 0..SCREEN_HEIGHT {
-                let color_idx = self.get(x, y);
-                set_pixel(leds, x, y, color_idx);
-            }
+        for (idx, &color_idx) in self.content.iter().enumerate() {
+            let x = idx % SCREEN_WIDTH;
+            let y = idx / SCREEN_WIDTH;
+            set_pixel(leds, x, y, color_idx);
         }
     }
 
@@ -245,10 +249,18 @@ impl FrameBuffer {
         true
     }
 
-    pub fn row_is_empty(&self, row: usize) -> bool {
-        if row >= SCREEN_HEIGHT {
-            return true;
+    pub fn try_clear_row(&mut self, row: usize) -> bool {
+        if self.row_is_full(row) {
+            for x in 0..SCREEN_WIDTH {
+                self.content[row * SCREEN_WIDTH + x] = 0;
+            }
+            true
+        } else {
+            false
         }
+    }
+
+    pub fn row_is_empty(&self, row: usize) -> bool {
         for x in 0..SCREEN_WIDTH {
             if self.content[row * SCREEN_WIDTH + x] != 0 {
                 return false;
@@ -256,9 +268,24 @@ impl FrameBuffer {
         }
         true
     }
-}
 
-// Abstract interfaces for game hardware - using generics instead of dyn traits
+    pub fn from_rows(rows: &[u32; 8], color: u8) -> FrameBuffer {
+        let mut buffer = FrameBuffer::new();
+
+        for y in 0..SCREEN_HEIGHT {
+            for (x, row) in rows.iter().enumerate() {
+                if x < SCREEN_WIDTH {
+                    let bit = row >> (SCREEN_HEIGHT - y - 1) & 1;
+                    if bit == 1 {
+                        buffer.set(SCREEN_WIDTH - x - 1, y, color);
+                    }
+                }
+            }
+        }
+
+        buffer
+    }
+}
 
 /// Trait for LED display functionality
 pub trait LedDisplay {
@@ -274,8 +301,9 @@ pub trait GameController {
 
 /// Game trait for different game implementations - using generics to avoid dyn issues
 pub trait Game {
-    async fn run<D, C>(&mut self, display: &mut D, controller: &mut C)
+    async fn run<D, C, T>(&mut self, display: &mut D, controller: &mut C, timer: &T)
     where
         D: LedDisplay,
-        C: GameController;
+        C: GameController,
+        T: Timer;
 }

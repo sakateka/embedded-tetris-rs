@@ -1,13 +1,13 @@
-use embassy_time::Timer;
+use core::option::Option;
 use smart_leds::RGB8;
 
 use crate::{
+    common::{Dot, FrameBuffer, Prng},
     common::{
-        Dot, FrameBuffer, GameController, LedDisplay, Prng, BLACK_IDX, BLUE_IDX, BRICK_IDX,
-        DARK_GREEN_IDX, GREEN_IDX, PINK_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
+        Game, GameController, LedDisplay, Timer, BLACK_IDX, BLUE_IDX, BRICK_IDX, DARK_GREEN_IDX,
+        GREEN_IDX, PINK_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
     },
     digits::DIGITS,
-    Game,
 };
 
 static ROAD_UPDATE_STEP_SIZE: u8 = 10;
@@ -169,15 +169,23 @@ impl RacesGame {
                 let x = car.x as usize;
                 let y = car.y as usize;
 
-                // Draw car body
-                self.screen.set(x - 1, y, BLUE_IDX);
-                self.screen.set(x, y, BLUE_IDX);
-                self.screen.set(x + 1, y, BLUE_IDX);
-                self.screen.set(x, y - 1, BLUE_IDX);
-                self.screen.set(x, y - 2, BLUE_IDX);
-                self.screen.set(x - 1, y - 2, BLUE_IDX);
-                self.screen.set(x + 1, y - 2, BLUE_IDX);
-                self.screen.set(x, y - 3, BLUE_IDX);
+                // Draw car body (check bounds to prevent underflow)
+                if x > 0 && x < SCREEN_WIDTH - 1 && y < SCREEN_HEIGHT {
+                    self.screen.set(x - 1, y, BLUE_IDX);
+                    self.screen.set(x, y, BLUE_IDX);
+                    self.screen.set(x + 1, y, BLUE_IDX);
+                }
+                if y > 0 && x < SCREEN_WIDTH {
+                    self.screen.set(x, y - 1, BLUE_IDX);
+                }
+                if y > 1 && x > 0 && x < SCREEN_WIDTH - 1 {
+                    self.screen.set(x, y - 2, BLUE_IDX);
+                    self.screen.set(x - 1, y - 2, BLUE_IDX);
+                    self.screen.set(x + 1, y - 2, BLUE_IDX);
+                }
+                if y > 2 && x < SCREEN_WIDTH {
+                    self.screen.set(x, y - 3, BLUE_IDX);
+                }
             }
         }
     }
@@ -207,7 +215,7 @@ impl RacesGame {
     fn update_bullets(&mut self) {
         let mut i = 0;
         while i < self.bullet_count {
-            self.bullets[i].y -= 1;
+            self.bullets[i].y = self.bullets[i].y.saturating_sub(1);
 
             // Remove bullets that are off screen
             if self.bullets[i].y < 0 {
@@ -359,14 +367,23 @@ impl RacesGame {
             return;
         }
 
-        self.screen.set(x - 1, y, GREEN_IDX);
-        self.screen.set(x, y, GREEN_IDX);
-        self.screen.set(x + 1, y, GREEN_IDX);
-        self.screen.set(x, y - 1, GREEN_IDX);
-        self.screen.set(x, y - 2, GREEN_IDX);
-        self.screen.set(x - 1, y - 2, GREEN_IDX);
-        self.screen.set(x + 1, y - 2, GREEN_IDX);
-        self.screen.set(x, y - 3, GREEN_IDX);
+        // Draw car body (check bounds to prevent underflow)
+        if x > 0 && x < SCREEN_WIDTH - 1 && y < SCREEN_HEIGHT {
+            self.screen.set(x - 1, y, GREEN_IDX);
+            self.screen.set(x, y, GREEN_IDX);
+            self.screen.set(x + 1, y, GREEN_IDX);
+        }
+        if y > 0 && x < SCREEN_WIDTH {
+            self.screen.set(x, y - 1, GREEN_IDX);
+        }
+        if y > 1 && x > 0 && x < SCREEN_WIDTH - 1 {
+            self.screen.set(x, y - 2, GREEN_IDX);
+            self.screen.set(x - 1, y - 2, GREEN_IDX);
+            self.screen.set(x + 1, y - 2, GREEN_IDX);
+        }
+        if y > 2 && x < SCREEN_WIDTH {
+            self.screen.set(x, y - 3, GREEN_IDX);
+        }
     }
 
     fn draw_obstacles(&mut self) {
@@ -424,27 +441,33 @@ impl RacesGame {
         }
     }
 
-    async fn game_over<D, C>(&mut self, mut leds: [RGB8; 256], display: &mut D, controller: &mut C)
-    where
+    async fn game_over<D, C, T>(
+        &mut self,
+        mut leds: [RGB8; 256],
+        display: &mut D,
+        controller: &mut C,
+        timer: &T,
+    ) where
         D: LedDisplay,
         C: GameController,
+        T: Timer,
     {
         // Flash screen
         for _ in 0..3 {
             self.screen.clear();
             self.screen.render(&mut leds);
             display.write(&leds).await;
-            Timer::after_millis(200).await;
+            timer.sleep_millis(200).await;
 
             self.draw_score();
             self.screen.render(&mut leds);
             display.write(&leds).await;
-            Timer::after_millis(200).await;
+            timer.sleep_millis(200).await;
         }
 
         // Wait for button press
         while !controller.was_pressed() {
-            Timer::after_millis(50).await;
+            timer.sleep_millis(50).await;
         }
     }
 
@@ -453,7 +476,7 @@ impl RacesGame {
         self.update_step % ROAD_UPDATE_STEP_SIZE == 0
     }
     fn can_move_car_horizontally(&mut self) -> bool {
-        self.update_step % (ROAD_UPDATE_STEP_SIZE / 2) == 0
+        self.update_step % (ROAD_UPDATE_STEP_SIZE / 4) == 0
     }
 
     fn should_update(&mut self) -> bool {
@@ -462,10 +485,11 @@ impl RacesGame {
 }
 
 impl Game for RacesGame {
-    async fn run<D, C>(&mut self, display: &mut D, controller: &mut C)
+    async fn run<D, C, T>(&mut self, display: &mut D, controller: &mut C, timer: &T)
     where
         D: LedDisplay,
         C: GameController,
+        T: Timer,
     {
         let mut leds = [RGB8::new(0, 0, 0); 256];
 
@@ -519,7 +543,7 @@ impl Game for RacesGame {
 
             // Check game over
             if self.lives == 0 {
-                self.game_over(leds, display, controller).await;
+                self.game_over(leds, display, controller, timer).await;
                 break;
             }
 
@@ -537,7 +561,7 @@ impl Game for RacesGame {
             self.screen.render(&mut leds);
             display.write(&leds).await;
 
-            Timer::after_millis(20).await;
+            timer.sleep_millis(20).await;
         }
     }
 }

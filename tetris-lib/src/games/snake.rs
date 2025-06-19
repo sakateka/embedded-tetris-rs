@@ -1,10 +1,11 @@
-use embassy_time::Timer;
 use smart_leds::RGB8;
 
 use crate::{
-    common::{GameController, LedDisplay, GREEN_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH},
+    common::{
+        Dot, FrameBuffer, Game, GameController, LedDisplay, Prng, Timer, GREEN_IDX, RED_IDX,
+        SCREEN_HEIGHT, SCREEN_WIDTH,
+    },
     digits::DIGITS,
-    Dot, FrameBuffer, Game, Prng,
 };
 
 pub struct SnakeGame {
@@ -129,36 +130,43 @@ impl SnakeGame {
         }
     }
 
-    async fn game_over<D, C>(&mut self, mut leds: [RGB8; 256], display: &mut D, controller: &mut C)
-    where
+    async fn game_over<D, C, T>(
+        &mut self,
+        mut leds: [RGB8; 256],
+        display: &mut D,
+        controller: &mut C,
+        timer: &T,
+    ) where
         D: LedDisplay,
         C: GameController,
+        T: Timer,
     {
         // Flash screen
         for _ in 0..3 {
             self.screen.clear();
             self.screen.render(&mut leds);
             display.write(&leds).await;
-            Timer::after_millis(200).await;
+            timer.sleep_millis(200).await;
 
             self.draw_snake();
             self.screen.render(&mut leds);
             display.write(&leds).await;
-            Timer::after_millis(200).await;
+            timer.sleep_millis(200).await;
         }
 
         // Wait for button press
         while !controller.was_pressed() {
-            Timer::after_millis(50).await;
+            timer.sleep_millis(50).await;
         }
     }
 }
 
 impl Game for SnakeGame {
-    async fn run<D, C>(&mut self, display: &mut D, controller: &mut C)
+    async fn run<D, C, T>(&mut self, display: &mut D, controller: &mut C, timer: &T)
     where
         D: LedDisplay,
         C: GameController,
+        T: Timer,
     {
         let mut leds = [RGB8::new(0, 0, 0); 256];
         let mut step = 30;
@@ -187,7 +195,7 @@ impl Game for SnakeGame {
                 step = 0;
                 // Move snake
                 if !self.move_forward() {
-                    self.game_over(leds, display, controller).await;
+                    self.game_over(leds, display, controller, timer).await;
                     break;
                 }
 
@@ -197,7 +205,7 @@ impl Game for SnakeGame {
                 display.write(&leds).await;
             }
             step += speedup;
-            Timer::after_millis(20).await;
+            timer.sleep_millis(20).await;
         }
     }
 }

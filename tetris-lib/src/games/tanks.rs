@@ -1,15 +1,14 @@
-use embassy_time::Timer;
+use core::default::Default;
+use core::ops::Fn;
 use smart_leds::RGB8;
 
-use crate::{
-    common::{
-        GameController, LedDisplay, COLORS, GREEN_IDX, PINK_IDX, RED_IDX, SCREEN_HEIGHT,
-        SCREEN_WIDTH,
-    },
-    digits::DIGITS,
-    figure::{Figure, TANK},
-    Dot, FrameBuffer, Game, Prng,
+use crate::common::{
+    Dot, FrameBuffer, Game, GameController, LedDisplay, Prng, Timer, COLORS, GREEN_IDX, PINK_IDX,
+    RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH,
 };
+
+use crate::digits::DIGITS;
+use crate::figure::{Figure, TANK};
 
 #[derive(Clone, Copy)]
 struct Missile {
@@ -181,12 +180,6 @@ pub struct TanksGame {
 }
 
 impl TanksGame {
-    const STAGE_SPAWN: u8 = 0;
-    const STAGE_MOVE: u8 = 1;
-    const STAGE_ROTATE: u8 = 2;
-    const STAGE_FIRE: u8 = 3;
-    const STAGE_NONE: u8 = 4;
-
     pub fn new(prng: Prng) -> Self {
         Self {
             screen: FrameBuffer::new(),
@@ -199,163 +192,25 @@ impl TanksGame {
         }
     }
 
-    fn can_hit_player(&self, tank: &Tank) -> bool {
-        let direction = tank.direction();
-        let pos = tank.pos.move_by(Dot::new(1, 1)); // Tank center
-        let player_center = self.tank.pos.move_by(Dot::new(1, 1));
-
-        let has_los = self.has_line_of_sight(tank, self.tank.pos);
-
-        if direction.x != 0 {
-            has_los
-                && pos.y == player_center.y
-                && ((direction.x > 0 && pos.x < player_center.x)
-                    || (direction.x < 0 && pos.x > player_center.x))
-        } else if direction.y != 0 {
-            has_los
-                && pos.x == player_center.x
-                && ((direction.y > 0 && pos.y < player_center.y)
-                    || (direction.y < 0 && pos.y > player_center.y))
-        } else {
-            false
-        }
-    }
-
-    fn has_line_of_sight(&self, tank: &Tank, target_pos: Dot) -> bool {
-        let tank_center = tank.pos.move_by(Dot::new(1, 1));
-        let target_center = target_pos.move_by(Dot::new(1, 1));
-
-        let dx = target_center.x - tank_center.x;
-        let dy = target_center.y - tank_center.y;
-
-        if dx != 0 && dy != 0 {
-            return false;
-        }
-
-        let steps = dx.abs().max(dy.abs());
-        if steps == 0 {
-            return true;
-        }
-
-        let step_x = if dx == 0 {
-            0
-        } else if dx > 0 {
-            1
-        } else {
-            -1
-        };
-        let step_y = if dy == 0 {
-            0
-        } else if dy > 0 {
-            1
-        } else {
-            -1
-        };
-
-        for i in 1..steps.min(5) {
-            let check_pos = Dot::new(tank_center.x + i * step_x, tank_center.y + i * step_y);
-            if self.screen.collides(check_pos.x, check_pos.y, &tank.figure) {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    fn _should_fire(&mut self, tank: &Tank) -> bool {
-        if self.can_hit_player(tank) {
-            return true;
-        }
-        self.prng.next_range(10) == 0
-    }
-
-    fn _smart_move(&mut self, tank: &mut Tank) {
-        let player_pos = self.tank.pos;
-        let tank_pos = tank.pos;
-
-        let dx = player_pos.x - tank_pos.x;
-        let dy = player_pos.y - tank_pos.y;
-
-        let mut preferred_directions = [Dot::new(0, 0); 4];
-        let mut dir_count = 0;
-
-        if dx.abs() > dy.abs() {
-            if dx > 0 {
-                preferred_directions[dir_count] = Dot::new(1, 0);
-                dir_count += 1;
-            } else {
-                preferred_directions[dir_count] = Dot::new(-1, 0);
-                dir_count += 1;
-            }
-            if dy > 0 {
-                preferred_directions[dir_count] = Dot::new(0, 1);
-                dir_count += 1;
-            } else if dy < 0 {
-                preferred_directions[dir_count] = Dot::new(0, -1);
-                dir_count += 1;
-            }
-        } else {
-            if dy > 0 {
-                preferred_directions[dir_count] = Dot::new(0, 1);
-                dir_count += 1;
-            } else {
-                preferred_directions[dir_count] = Dot::new(0, -1);
-                dir_count += 1;
-            }
-            if dx > 0 {
-                preferred_directions[dir_count] = Dot::new(1, 0);
-                dir_count += 1;
-            } else if dx < 0 {
-                preferred_directions[dir_count] = Dot::new(-1, 0);
-                dir_count += 1;
-            }
-        }
-
-        for i in 0..dir_count {
-            let pos = tank.pos.move_by(preferred_directions[i]);
-            if !self.screen.collides(pos.x, pos.y, &tank.figure) {
-                tank.move_(
-                    &preferred_directions[i],
-                    |x, y, _| self.screen.collides(x, y, &TANK),
-                    true,
-                );
-                return;
-            }
-        }
-
-        let direction = tank.direction();
-        let pos = tank.pos.move_by(direction);
-        if self.screen.collides(pos.x, pos.y, &tank.figure) {
-            tank.rotate(&direction);
-        }
-        tank.move_(
-            &direction,
-            |x, y, _| self.screen.collides(x, y, &TANK),
-            false,
-        );
-    }
-
     fn ai(&mut self) {
         // First priority: spawn tanks if we have less than 2
-        if self.enemy_count < 2 {
-            if self.enemy_count < self.enemies.len() {
-                let spawns = [
-                    Dot::new(0, 6),
-                    Dot::new(5, 6),
-                    Dot::new(0, 29),
-                    Dot::new(5, 29),
-                ];
+        if self.enemy_count < 2 && self.enemy_count < self.enemies.len() {
+            let spawns = [
+                Dot::new(0, 6),
+                Dot::new(5, 6),
+                Dot::new(0, 29),
+                Dot::new(5, 29),
+            ];
 
-                // Find an available spawn point
-                for (idx, &spawn_pos) in spawns.iter().enumerate() {
-                    if !self.enemies[..self.enemy_count]
-                        .iter()
-                        .any(|e| e.origin == idx as i8)
-                    {
-                        self.enemies[self.enemy_count] = Tank::new(spawn_pos, idx as i8);
-                        self.enemy_count += 1;
-                        break;
-                    }
+            // Find an available spawn point
+            for (idx, &spawn_pos) in spawns.iter().enumerate() {
+                if !self.enemies[..self.enemy_count]
+                    .iter()
+                    .any(|e| e.origin == idx as i8)
+                {
+                    self.enemies[self.enemy_count] = Tank::new(spawn_pos, idx as i8);
+                    self.enemy_count += 1;
+                    break;
                 }
             }
         }
@@ -519,10 +374,16 @@ impl TanksGame {
         }
     }
 
-    async fn game_over<D, C>(&mut self, mut leds: [RGB8; 256], display: &mut D, controller: &mut C)
-    where
+    async fn game_over<D, C, T>(
+        &mut self,
+        mut leds: [RGB8; 256],
+        display: &mut D,
+        controller: &mut C,
+        timer: &T,
+    ) where
         D: LedDisplay,
         C: GameController,
+        T: Timer,
     {
         while !controller.was_pressed() {
             let x = self.prng.next_range(SCREEN_WIDTH as u8);
@@ -531,15 +392,17 @@ impl TanksGame {
             self.screen.set(x as usize, y as usize, color);
             self.screen.render(&mut leds);
             display.write(&leds).await;
+            timer.sleep_millis(200).await;
         }
     }
 }
 
 impl Game for TanksGame {
-    async fn run<D, C>(&mut self, display: &mut D, controller: &mut C)
+    async fn run<D, C, T>(&mut self, display: &mut D, controller: &mut C, timer: &T)
     where
         D: LedDisplay,
         C: GameController,
+        T: Timer,
     {
         let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
@@ -551,7 +414,7 @@ impl Game for TanksGame {
             if self.tank.is_dead() {
                 self.lives -= 1;
                 if self.lives < 0 {
-                    self.game_over(leds, display, controller).await;
+                    self.game_over(leds, display, controller, timer).await;
                     return;
                 }
             }
@@ -595,7 +458,7 @@ impl Game for TanksGame {
 
             self.screen.render(&mut leds);
             display.write(&leds).await;
-            Timer::after_millis(100).await;
+            timer.sleep_millis(100).await;
         }
     }
 }
