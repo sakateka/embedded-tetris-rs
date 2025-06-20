@@ -23,7 +23,7 @@ impl LedDisplay for SimpleConsoleDisplay {
                         let green = color.g as u16 * 20;
                         let blue = color.b as u16 * 20;
                         let _ = io::stdout().write_all(
-                            format!("\x1b[38;2;{};{};{}m####\x1b[0m", red, green, blue).as_bytes()
+                            format!("\x1b[38;2;{};{};{}m####\x1b[0m", red, green, blue).as_bytes(),
                         );
                     } else {
                         let _ = io::stdout().write_all(b"    ");

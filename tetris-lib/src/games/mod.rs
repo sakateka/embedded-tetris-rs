@@ -3,12 +3,12 @@ pub mod snake;
 pub mod tanks;
 pub mod tetris;
 
-use crate::common::{Game, GameController, LedDisplay, Prng, Timer, FrameBuffer, GREEN_IDX};
+use crate::common::{FrameBuffer, Game, GameController, LedDisplay, Prng, Timer, GREEN_IDX};
 use races::RacesGame;
+use smart_leds::RGB8;
 use snake::SnakeGame;
 use tanks::TanksGame;
 use tetris::TetrisGame;
-use smart_leds::RGB8;
 
 //  Coordinates
 //        x
@@ -73,12 +73,8 @@ pub const SNAKE_TITLE: [u32; 8] = [
 pub const GAME_TITLES: [&[u32; 8]; 4] = [&TETRIS_TITLE, &SNAKE_TITLE, &TANKS_TITLE, &RACES_TITLE];
 
 /// Run a game menu loop that allows selecting and starting games
-pub async fn run_game_menu<D, C, T, F>(
-    display: &mut D,
-    controller: &mut C,
-    timer: &T,
-    seed_fn: F,
-) where
+pub async fn run_game_menu<D, C, T, F>(display: &mut D, controller: &mut C, timer: &T, seed_fn: F)
+where
     D: LedDisplay,
     C: GameController,
     T: Timer,

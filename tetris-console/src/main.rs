@@ -38,7 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as u32
-    }).await;
+    })
+    .await;
 
     Ok(())
 }
