@@ -89,11 +89,6 @@ impl Tank {
         rotated > 0
     }
 
-    fn move_forward(&mut self) {
-        let direction = self.direction();
-        self.pos = self.pos.move_by(direction);
-    }
-
     fn fire(&mut self) {
         let direction = self.direction();
         for m in &mut self.missiles {
