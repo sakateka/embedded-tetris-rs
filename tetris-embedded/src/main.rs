@@ -13,8 +13,8 @@ use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
 use embassy_time::{Instant, Timer as EmbassyTimer};
 use smart_leds::RGB8;
-use tetris_lib::common::{FrameBuffer, LedDisplay, Prng, Timer, GREEN_IDX};
-use tetris_lib::games::{run_game, GAME_TITLES};
+use tetris_lib::common::{LedDisplay, Timer};
+use tetris_lib::games::run_game_menu;
 use {defmt_rtt as _, panic_probe as _};
 
 mod control;
@@ -63,11 +63,9 @@ async fn main(spawner: Spawner) {
     let ws2812 = PioWs2812::new(&mut common, sm0, p.DMA_CH0, p.PIN_13, &program);
     let mut display = Ws2812Display::new(ws2812);
 
-    // Initialize ADC for joystick input (Pins 27 and 28)
     let adc_reader = Adc::new(p.ADC, Irqs, Config::default());
     let adc_pin_x = Channel::new_pin(p.PIN_27, Pull::None);
     let adc_pin_y = Channel::new_pin(p.PIN_28, Pull::None);
-    // Initialize button (Pin 16)
     let button_pin = Input::new(p.PIN_16, Pull::Up);
     let button_controller = ButtonController::new(button_pin);
 
@@ -75,37 +73,10 @@ async fn main(spawner: Spawner) {
     spawner.spawn(button_task(button_controller)).unwrap();
 
     let mut joystick = Joystick::new(adc_reader, adc_pin_x, adc_pin_y);
-    let mut leds: [RGB8; 256] = [RGB8::default(); 256];
     let timer = EmbeddedTimer;
 
-    // Game menu
-    let mut game_idx: u8 = 0;
-
     info!("Starting main menu loop");
-    loop {
-        // Read joystick for menu navigation
-        let x_input = joystick.read_x().await;
-
-        if x_input != 0 {
-            game_idx = game_idx.wrapping_add(x_input as u8) % GAME_TITLES.len() as u8;
-            timer.sleep_millis(100).await; // Debounce
-        }
-
-        if joystick.was_pressed() {
-            let seed = Instant::now().as_ticks() as u32;
-            let prng = Prng::new(seed);
-            run_game(game_idx, prng, &mut display, &mut joystick, &timer).await;
-        }
-
-        // Display menu - show game index
-        let title = GAME_TITLES[game_idx as usize % GAME_TITLES.len()];
-        let screen = FrameBuffer::from_rows(title, GREEN_IDX);
-        screen.render(&mut leds);
-        display.write(&leds).await;
-
-        // Phantom press detected due to ws2812 write ???
-        _ = joystick.was_pressed();
-
-        timer.sleep_millis(50).await;
-    }
+    run_game_menu(&mut display, &mut joystick, &timer, || {
+        Instant::now().as_ticks() as u32
+    }).await;
 }

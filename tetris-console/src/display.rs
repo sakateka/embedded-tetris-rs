@@ -3,29 +3,12 @@ use std::io::{self, Write};
 use tetris_lib::common::{LedDisplay, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 // Simple console display implementation
-pub struct SimpleConsoleDisplay {
-    first_frame: bool,
-}
-
-impl SimpleConsoleDisplay {
-    pub fn new() -> Self {
-        Self { first_frame: true }
-    }
-
-    pub fn reset_frame(&mut self) {
-        self.first_frame = true;
-    }
-}
+pub struct SimpleConsoleDisplay;
 
 impl LedDisplay for SimpleConsoleDisplay {
     async fn write(&mut self, leds: &[RGB8; 256]) {
-        if !self.first_frame {
-            // Move cursor up to overwrite previous frame
-            print!("\x1b[{}A", SCREEN_HEIGHT * 2 + 4);
-            println!(" {:>1$}\n{:>1$}\n", " ", SCREEN_WIDTH);
-        } else {
-            self.first_frame = false;
-        }
+        // Move cursor up to overwrite previous frame
+        let _ = io::stdout().write_all(format!("\x1b[{}A", SCREEN_HEIGHT * 2 + 1).as_bytes());
 
         for y in 0..SCREEN_HEIGHT {
             for _ in 0..2 {
@@ -39,15 +22,17 @@ impl LedDisplay for SimpleConsoleDisplay {
                         let red = color.r as u16 * 20;
                         let green = color.g as u16 * 20;
                         let blue = color.b as u16 * 20;
-                        print!("\x1b[38;2;{};{};{}m####\x1b[0m", red, green, blue);
+                        let _ = io::stdout().write_all(
+                            format!("\x1b[38;2;{};{};{}m####\x1b[0m", red, green, blue).as_bytes()
+                        );
                     } else {
-                        print!("    ");
+                        let _ = io::stdout().write_all(b"    ");
                     }
                 }
-                println!();
+                let _ = io::stdout().write_all(b"\n");
             }
         }
-        println!("Controls: A/D = change game, Space = start, Q = quit");
-        io::stdout().flush().unwrap();
+        let _ = io::stdout().write_all(b"Controls: A/D = change game, Space = start, Q = quit\n");
+        let _ = io::stdout().flush();
     }
 }
