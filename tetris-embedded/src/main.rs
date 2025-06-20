@@ -13,7 +13,7 @@ use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
 use embassy_time::{Instant, Timer as EmbassyTimer};
 use smart_leds::RGB8;
-use tetris_lib::common::{FrameBuffer, LedDisplay, Prng, Timer, BLACK, GREEN_IDX};
+use tetris_lib::common::{FrameBuffer, LedDisplay, Prng, Timer, GREEN_IDX};
 use tetris_lib::games::{run_game, GAME_TITLES};
 use {defmt_rtt as _, panic_probe as _};
 
@@ -40,9 +40,7 @@ impl<'a> Ws2812Display<'a> {
 // Implement LedDisplay for our wrapper
 impl LedDisplay for Ws2812Display<'_> {
     async fn write(&mut self, leds: &[RGB8; 256]) {
-        // Convert slice to fixed array for ws2812
-        let array: &[RGB8; 256] = &leds[..256].try_into().unwrap();
-        self.0.write(array).await;
+        self.0.write(leds).await;
     }
 }
 
@@ -100,7 +98,6 @@ async fn main(spawner: Spawner) {
         }
 
         // Display menu - show game index
-        leds.fill(BLACK);
         let title = GAME_TITLES[game_idx as usize % GAME_TITLES.len()];
         let screen = FrameBuffer::from_rows(title, GREEN_IDX);
         screen.render(&mut leds);
