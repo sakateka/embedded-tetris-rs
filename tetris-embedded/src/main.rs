@@ -28,7 +28,6 @@ impl Timer for EmbeddedTimer {
     }
 }
 
-
 // Wrapper type to implement LedDisplay for PioWs2812
 pub struct Ws2812Display<'a>(PioWs2812<'a, PIO0, 0, 256>);
 
@@ -108,6 +107,9 @@ async fn main(spawner: Spawner) {
         let screen = FrameBuffer::from_rows(title, GREEN_IDX);
         screen.render(&mut leds);
         display.write(&leds).await;
+
+        // Phantom press detected due to ws2812 write ???
+        _ = joystick.was_pressed();
 
         timer.sleep_millis(50).await;
     }
