@@ -21,6 +21,10 @@ impl Figure {
         self.wh & 0x0f
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.data == 0
+    }
+
     pub fn len(&self) -> u8 {
         self.height() * self.width()
     }

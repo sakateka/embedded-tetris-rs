@@ -18,7 +18,7 @@ impl SimpleConsoleDisplay {
 }
 
 impl LedDisplay for SimpleConsoleDisplay {
-    async fn write(&mut self, leds: &[RGB8]) {
+    async fn write(&mut self, leds: &[RGB8; 256]) {
         if !self.first_frame {
             // Move cursor up to overwrite previous frame
             print!("\x1b[{}A", SCREEN_HEIGHT * 2 + 4);

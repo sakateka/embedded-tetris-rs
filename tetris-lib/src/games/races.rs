@@ -14,8 +14,12 @@ static ROAD_UPDATE_STEP_SIZE: u8 = 10;
 static UPDATE_STEP_SIZE: u8 = ROAD_UPDATE_STEP_SIZE * 2;
 
 // Races game implementation
-pub struct RacesGame {
+pub struct RacesGame<'a, D, C, T> {
     screen: FrameBuffer,
+    display: &'a mut D,
+    controller: &'a mut C,
+    timer: &'a T,
+
     update_step: u8,
     cars_destroyed: u8,
     car_pos: Dot,
@@ -35,10 +39,14 @@ pub struct RacesGame {
     prng: Prng,
 }
 
-impl RacesGame {
-    pub fn new(prng: Prng) -> Self {
+impl<'a, D: LedDisplay, C: GameController, T: Timer> RacesGame<'a, D, C, T> {
+    pub fn new(prng: Prng, display: &'a mut D, controller: &'a mut C, timer: &'a T) -> Self {
         let mut game = Self {
             screen: FrameBuffer::new(),
+            display,
+            controller,
+            timer,
+
             update_step: 0,
             cars_destroyed: 0,
             car_pos: Dot::new(3, 28),
@@ -441,33 +449,22 @@ impl RacesGame {
         }
     }
 
-    async fn game_over<D, C, T>(
-        &mut self,
-        mut leds: [RGB8; 256],
-        display: &mut D,
-        controller: &mut C,
-        timer: &T,
-    ) where
-        D: LedDisplay,
-        C: GameController,
-        T: Timer,
-    {
-        // Flash screen
+    async fn game_over(&mut self, mut leds: [RGB8; 256]) {
         for _ in 0..3 {
             self.screen.clear();
             self.screen.render(&mut leds);
-            display.write(&leds).await;
-            timer.sleep_millis(200).await;
+            self.display.write(&leds).await;
+            self.timer.sleep_millis(200).await;
 
             self.draw_score();
             self.screen.render(&mut leds);
-            display.write(&leds).await;
-            timer.sleep_millis(200).await;
+            self.display.write(&leds).await;
+            self.timer.sleep_millis(200).await;
         }
 
         // Wait for button press
-        while !controller.was_pressed() {
-            timer.sleep_millis(50).await;
+        while !self.controller.was_pressed() {
+            self.timer.sleep_millis(50).await;
         }
     }
 
@@ -484,18 +481,13 @@ impl RacesGame {
     }
 }
 
-impl Game for RacesGame {
-    async fn run<D, C, T>(&mut self, display: &mut D, controller: &mut C, timer: &T)
-    where
-        D: LedDisplay,
-        C: GameController,
-        T: Timer,
-    {
+impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for RacesGame<'a, D, C, T> {
+    async fn run(&mut self) {
         let mut leds = [RGB8::new(0, 0, 0); 256];
 
         loop {
             // Fire bullet on button press
-            if controller.was_pressed()
+            if self.controller.was_pressed()
                 && self.bullet_count < self.bullets.len()
                 && self.max_bullets > 0
             {
@@ -507,8 +499,8 @@ impl Game for RacesGame {
             self.spawn_obstacles();
             self.spawn_bullet_powerup();
             // Handle joystick input
-            let x = controller.read_x().await;
-            let y = controller.read_y().await;
+            let x = self.controller.read_x().await;
+            let y = self.controller.read_y().await;
 
             if self.can_move_car_horizontally() {
                 // Move car horizontally
@@ -543,7 +535,7 @@ impl Game for RacesGame {
 
             // Check game over
             if self.lives == 0 {
-                self.game_over(leds, display, controller, timer).await;
+                self.game_over(leds).await;
                 break;
             }
 
@@ -559,9 +551,9 @@ impl Game for RacesGame {
 
             // Update display
             self.screen.render(&mut leds);
-            display.write(&leds).await;
+            self.display.write(&leds).await;
 
-            timer.sleep_millis(20).await;
+            self.timer.sleep_millis(20).await;
         }
     }
 }

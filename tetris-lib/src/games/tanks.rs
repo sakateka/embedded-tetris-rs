@@ -169,8 +169,12 @@ impl Tank {
 }
 
 // Tanks game implementation
-pub struct TanksGame {
+pub struct TanksGame<'a, D, C, T> {
     screen: FrameBuffer,
+    display: &'a mut D,
+    controller: &'a mut C,
+    timer: &'a T,
+
     tank: Tank,
     enemies: [Tank; 4],
     enemy_count: usize,
@@ -179,10 +183,14 @@ pub struct TanksGame {
     prng: Prng,
 }
 
-impl TanksGame {
-    pub fn new(prng: Prng) -> Self {
+impl<'a, D: LedDisplay, C: GameController, T: Timer> TanksGame<'a, D, C, T> {
+    pub fn new(prng: Prng, display: &'a mut D, controller: &'a mut C, timer: &'a T) -> Self {
         Self {
             screen: FrameBuffer::new(),
+            display,
+            controller,
+            timer,
+
             tank: Tank::new(Dot::new(3, 16), -1),
             enemies: [Tank::new(Dot::new(0, 0), 0); 4],
             enemy_count: 0,
@@ -374,31 +382,21 @@ impl TanksGame {
         }
     }
 
-    async fn game_over<D, C, T>(
-        &mut self,
-        mut leds: [RGB8; 256],
-        display: &mut D,
-        controller: &mut C,
-        timer: &T,
-    ) where
-        D: LedDisplay,
-        C: GameController,
-        T: Timer,
-    {
-        while !controller.was_pressed() {
+    async fn game_over(&mut self, mut leds: [RGB8; 256]) {
+        while !self.controller.was_pressed() {
             let x = self.prng.next_range(SCREEN_WIDTH as u8);
             let y = self.prng.next_range(SCREEN_HEIGHT as u8);
             let color = self.prng.next_range(COLORS.len() as u8);
             self.screen.set(x as usize, y as usize, color);
             self.screen.render(&mut leds);
-            display.write(&leds).await;
-            timer.sleep_millis(200).await;
+            self.display.write(&leds).await;
+            self.timer.sleep_millis(200).await;
         }
     }
 }
 
-impl Game for TanksGame {
-    async fn run<D, C, T>(&mut self, display: &mut D, controller: &mut C, timer: &T)
+impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for TanksGame<'a, D, C, T> {
+    async fn run(&mut self)
     where
         D: LedDisplay,
         C: GameController,
@@ -414,17 +412,17 @@ impl Game for TanksGame {
             if self.tank.is_dead() {
                 self.lives -= 1;
                 if self.lives < 0 {
-                    self.game_over(leds, display, controller, timer).await;
+                    self.game_over(leds).await;
                     return;
                 }
             }
 
-            if controller.was_pressed() {
+            if self.controller.was_pressed() {
                 self.tank.fire();
             }
 
-            let x_input = controller.read_x().await;
-            let y_input = controller.read_y().await;
+            let x_input = self.controller.read_x().await;
+            let y_input = self.controller.read_y().await;
             let direction = Dot::new(x_input, y_input).to_direction();
 
             let fig = self.tank.figure;
@@ -457,8 +455,8 @@ impl Game for TanksGame {
             step += 1 + speedup;
 
             self.screen.render(&mut leds);
-            display.write(&leds).await;
-            timer.sleep_millis(100).await;
+            self.display.write(&leds).await;
+            self.timer.sleep_millis(100).await;
         }
     }
 }

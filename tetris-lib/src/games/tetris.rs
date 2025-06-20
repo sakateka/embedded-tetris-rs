@@ -9,9 +9,12 @@ use crate::figure::{Figure, TETRAMINO};
 
 use crate::digits::DIGITS;
 
-pub struct TetrisGame {
+pub struct TetrisGame<'a, D, C, T> {
     screen: FrameBuffer,
     concrete: FrameBuffer,
+    display: &'a mut D,
+    controller: &'a mut C,
+    timer: &'a T,
     score: u8,
     init_x: i8,
     init_y: i8,
@@ -19,11 +22,14 @@ pub struct TetrisGame {
     prng: Prng,
 }
 
-impl TetrisGame {
-    pub fn new(prng: Prng) -> Self {
+impl<'a, D: LedDisplay, C: GameController, T: Timer> TetrisGame<'a, D, C, T> {
+    pub fn new(prng: Prng, display: &'a mut D, controller: &'a mut C, timer: &'a T) -> Self {
         Self {
             screen: FrameBuffer::new(),
             concrete: FrameBuffer::new(),
+            display,
+            controller,
+            timer,
             score: 0,
             init_x: 3,
             init_y: 6,
@@ -77,13 +83,7 @@ impl TetrisGame {
         (cleared_rows, count)
     }
 
-    async fn animate_concrete_shift<D: LedDisplay, T: Timer>(
-        &mut self,
-        display: &mut D,
-        timer: &T,
-        cleared_rows: &[usize],
-        count: usize,
-    ) {
+    async fn animate_concrete_shift(&mut self, cleared_rows: &[usize], count: usize) {
         let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
         // For each cleared row, animate the blocks above it falling down
@@ -111,8 +111,8 @@ impl TetrisGame {
                 self.screen.copy_from(&self.concrete);
                 self.draw_score();
                 self.screen.render(&mut leds);
-                display.write(&leds).await;
-                timer.sleep_millis(50).await;
+                self.display.write(&leds).await;
+                self.timer.sleep_millis(50).await;
 
                 if from_idx == 0 {
                     break;
@@ -134,20 +134,17 @@ impl TetrisGame {
         self.screen.copy_from(&self.concrete);
         self.draw_score();
         self.screen.render(&mut leds);
-        display.write(&leds).await;
+        self.display.write(&leds).await;
     }
 
-    async fn game_over<D: LedDisplay, C: GameController, T: Timer>(
+    async fn game_over(
         &mut self,
         mut leds: [RGB8; 256],
-        display: &mut D,
-        controller: &mut C,
-        timer: &T,
         last_pos: Dot,
         last_figure: &Figure,
         last_color: u8,
     ) {
-        while !controller.was_pressed() {
+        while !self.controller.was_pressed() {
             // Preserve the concrete blocks and score
             self.screen.copy_from(&self.concrete);
             self.draw_score();
@@ -156,26 +153,21 @@ impl TetrisGame {
             self.screen
                 .draw_figure(last_pos.x, last_pos.y - 1, last_figure, last_color);
             self.screen.render(&mut leds);
-            display.write(&leds).await;
-            timer.sleep_millis(500).await;
+            self.display.write(&leds).await;
+            self.timer.sleep_millis(500).await;
 
             // Clear only the last tetramino
             self.screen
                 .draw_figure(last_pos.x, last_pos.y - 1, last_figure, BLACK_IDX);
             self.screen.render(&mut leds);
-            display.write(&leds).await;
-            timer.sleep_millis(500).await;
+            self.display.write(&leds).await;
+            self.timer.sleep_millis(500).await;
         }
     }
 }
 
-impl Game for TetrisGame {
-    async fn run<D, C, T>(&mut self, display: &mut D, controller: &mut C, timer: &T)
-    where
-        D: LedDisplay,
-        C: GameController,
-        T: Timer,
-    {
+impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for TetrisGame<'a, D, C, T> {
+    async fn run(&mut self) {
         let mut x = self.init_x;
         let mut y = self.init_y;
         let mut ipass = 0;
@@ -193,7 +185,7 @@ impl Game for TetrisGame {
             }
 
             // Read joystick
-            let x_diff = controller.read_x().await;
+            let x_diff = self.controller.read_x().await;
             let new_x = x + x_diff;
 
             if new_x >= 0 && new_x < SCREEN_WIDTH as i8 && !self.concrete.collides(new_x, y, &curr)
@@ -201,7 +193,7 @@ impl Game for TetrisGame {
                 x = new_x;
             }
 
-            if controller.was_pressed() {
+            if self.controller.was_pressed() {
                 let rotated = curr.rotate();
                 let shift = if rotated.height() > rotated.width()
                     && x + rotated.width() as i8 >= SCREEN_WIDTH as i8
@@ -238,16 +230,8 @@ impl Game for TetrisGame {
                 y = self.init_y + 1;
 
                 if self.concrete.collides(x, y, &curr) {
-                    self.game_over(
-                        leds,
-                        display,
-                        controller,
-                        timer,
-                        Dot::new(x, y),
-                        &curr,
-                        curr_color,
-                    )
-                    .await;
+                    self.game_over(leds, Dot::new(x, y), &curr, curr_color)
+                        .await;
                     return;
                 }
 
@@ -261,24 +245,23 @@ impl Game for TetrisGame {
 
                 if count > 0 {
                     // Animate each cleared row separately
-                    self.animate_concrete_shift(display, timer, &cleared_rows, count)
-                        .await;
+                    self.animate_concrete_shift(&cleared_rows, count).await;
                 }
             }
 
             self.screen.render(&mut leds);
-            display.write(&leds).await;
+            self.display.write(&leds).await;
 
             if self.score > 99 {
                 self.score = 0;
             }
 
             let speed_bonus = (self.score / 10).max(1);
-            let y_input = controller.read_y().await;
+            let y_input = self.controller.read_y().await;
             let down_bonus = if y_input > 0 { 10 } else { 0 };
 
             ipass += speed_bonus + down_bonus;
-            timer.sleep_millis(50).await;
+            self.timer.sleep_millis(50).await;
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::io::{self, Read};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tetris_lib::common::GameController;
 
 // Store original terminal state for restoration

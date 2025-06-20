@@ -287,9 +287,15 @@ impl FrameBuffer {
     }
 }
 
+impl Default for FrameBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Trait for LED display functionality
 pub trait LedDisplay {
-    async fn write(&mut self, leds: &[smart_leds::RGB8]);
+    async fn write(&mut self, leds: &[smart_leds::RGB8; 256]);
 }
 
 /// Trait for game controller functionality (joystick + button)
@@ -301,9 +307,5 @@ pub trait GameController {
 
 /// Game trait for different game implementations - using generics to avoid dyn issues
 pub trait Game {
-    async fn run<D, C, T>(&mut self, display: &mut D, controller: &mut C, timer: &T)
-    where
-        D: LedDisplay,
-        C: GameController,
-        T: Timer;
+    async fn run(&mut self);
 }

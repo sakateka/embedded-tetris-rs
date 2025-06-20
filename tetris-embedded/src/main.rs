@@ -39,12 +39,10 @@ impl<'a> Ws2812Display<'a> {
 
 // Implement LedDisplay for our wrapper
 impl LedDisplay for Ws2812Display<'_> {
-    async fn write(&mut self, leds: &[RGB8]) {
+    async fn write(&mut self, leds: &[RGB8; 256]) {
         // Convert slice to fixed array for ws2812
-        if leds.len() >= 256 {
-            let array: &[RGB8; 256] = &leds[..256].try_into().unwrap();
-            self.0.write(array).await;
-        }
+        let array: &[RGB8; 256] = &leds[..256].try_into().unwrap();
+        self.0.write(array).await;
     }
 }
 

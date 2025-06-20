@@ -85,20 +85,20 @@ pub async fn run_game<D, C, T>(
 {
     match game_idx {
         0 => {
-            let mut tetris = TetrisGame::new(prng);
-            tetris.run(display, controller, timer).await;
+            let mut tetris = TetrisGame::new(prng, display, controller, timer);
+            tetris.run().await;
         }
         1 => {
-            let mut snake = SnakeGame::new(prng);
-            snake.run(display, controller, timer).await;
+            let mut snake = SnakeGame::new(prng, display, controller, timer);
+            snake.run().await;
         }
         2 => {
-            let mut tanks = TanksGame::new(prng);
-            tanks.run(display, controller, timer).await;
+            let mut tanks = TanksGame::new(prng, display, controller, timer);
+            tanks.run().await;
         }
         3 => {
-            let mut races = RacesGame::new(prng);
-            races.run(display, controller, timer).await;
+            let mut races = RacesGame::new(prng, display, controller, timer);
+            races.run().await;
         }
         _ => {}
     }

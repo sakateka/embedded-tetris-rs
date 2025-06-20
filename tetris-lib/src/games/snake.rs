@@ -8,24 +8,31 @@ use crate::{
     digits::DIGITS,
 };
 
-pub struct SnakeGame {
+pub struct SnakeGame<'a, D, C, T> {
+    screen: FrameBuffer,
+    display: &'a mut D,
+    controller: &'a mut C,
+    timer: &'a T,
+
     body: [Dot; 256],
     body_len: usize,
     direction: Dot,
     apple: Dot,
-    screen: FrameBuffer,
     prng: Prng,
     score: u8,
 }
 
-impl SnakeGame {
-    pub fn new(prng: Prng) -> Self {
+impl<'a, D: LedDisplay, C: GameController, T: Timer> SnakeGame<'a, D, C, T> {
+    pub fn new(prng: Prng, display: &'a mut D, controller: &'a mut C, timer: &'a T) -> Self {
         let mut game = Self {
+            screen: FrameBuffer::new(),
+            display,
+            controller,
+            timer,
             body: [Dot::new(0, 0); 256],
             body_len: 3,
             direction: Dot::new(1, 0),
             apple: Dot::new(0, 0),
-            screen: FrameBuffer::new(),
             prng,
             score: 0,
         };
@@ -130,52 +137,36 @@ impl SnakeGame {
         }
     }
 
-    async fn game_over<D, C, T>(
-        &mut self,
-        mut leds: [RGB8; 256],
-        display: &mut D,
-        controller: &mut C,
-        timer: &T,
-    ) where
-        D: LedDisplay,
-        C: GameController,
-        T: Timer,
-    {
-        // Flash screen
+    async fn game_over(&mut self, mut leds: [RGB8; 256]) {
         for _ in 0..3 {
             self.screen.clear();
             self.screen.render(&mut leds);
-            display.write(&leds).await;
-            timer.sleep_millis(200).await;
+            self.display.write(&leds).await;
+            self.timer.sleep_millis(200).await;
 
             self.draw_snake();
             self.screen.render(&mut leds);
-            display.write(&leds).await;
-            timer.sleep_millis(200).await;
+            self.display.write(&leds).await;
+            self.timer.sleep_millis(200).await;
         }
 
         // Wait for button press
-        while !controller.was_pressed() {
-            timer.sleep_millis(50).await;
+        while !self.controller.was_pressed() {
+            self.timer.sleep_millis(50).await;
         }
     }
 }
 
-impl Game for SnakeGame {
-    async fn run<D, C, T>(&mut self, display: &mut D, controller: &mut C, timer: &T)
-    where
-        D: LedDisplay,
-        C: GameController,
-        T: Timer,
-    {
+impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for SnakeGame<'a, D, C, T> {
+    async fn run(&mut self) {
         let mut leds = [RGB8::new(0, 0, 0); 256];
         let mut step = 30;
         let mut speedup = 1;
 
         loop {
             // Handle joystick input
-            let x = controller.read_x().await;
-            let y = controller.read_y().await;
+            let x = self.controller.read_x().await;
+            let y = self.controller.read_y().await;
             let new_dir = Dot::new(x, y).to_direction();
 
             if !new_dir.is_zero() {
@@ -195,17 +186,17 @@ impl Game for SnakeGame {
                 step = 0;
                 // Move snake
                 if !self.move_forward() {
-                    self.game_over(leds, display, controller, timer).await;
+                    self.game_over(leds).await;
                     break;
                 }
 
                 // Draw and update display
                 self.draw_snake();
                 self.screen.render(&mut leds);
-                display.write(&leds).await;
+                self.display.write(&leds).await;
             }
             step += speedup;
-            timer.sleep_millis(20).await;
+            self.timer.sleep_millis(20).await;
         }
     }
 }
