@@ -18,6 +18,12 @@ impl Timer for ConsoleTimer {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logger
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Info)
+        .parse_default_env()
+        .init();
+
     // Enable raw terminal mode like machine.py
     enable_raw_mode();
 

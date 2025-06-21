@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tetris-lib = { path = "../tetris-lib" }
+tetris-lib = { path = "../tetris-lib", features = ["std-log"] }
 tokio = { version = "1.0", features = ["full"] }
 smart-leds = "0.4.0"
 libc = "0.2"
 ctrlc = "3.0"
+log = "0.4"
+env_logger = "0.11"

@@ -5,3 +5,4 @@ pub mod common;
 pub mod digits;
 pub mod figure;
 pub mod games;
+pub mod log;

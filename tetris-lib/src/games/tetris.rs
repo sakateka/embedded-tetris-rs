@@ -146,7 +146,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for TetrisGame<'a, D, 
         let mut x = INIT_X;
         let mut y = INIT_Y;
         let mut ipass: i8 = 0;
-        let mut mpass: i8 = 0;
+        let mut mpass: u8 = 0;
 
         let mut curr_idx = self.prng.next_range(7);
         let mut next_idx = self.prng.next_range(7);
@@ -166,7 +166,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for TetrisGame<'a, D, 
             if mpass % 2 == 0 {
                 new_x = x;
             }
-            mpass += 1;
+            mpass = mpass.wrapping_add(1);
 
             if new_x >= 0 && new_x < SCREEN_WIDTH as i8 && !self.concrete.collides(new_x, y, &curr)
             {

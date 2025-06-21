@@ -1,9 +1,12 @@
+pub mod life;
 pub mod races;
 pub mod snake;
 pub mod tanks;
 pub mod tetris;
 
 use crate::common::{FrameBuffer, Game, GameController, LedDisplay, Prng, Timer, GREEN_IDX};
+use crate::log::info;
+use life::LifeGame;
 use races::RacesGame;
 use smart_leds::RGB8;
 use snake::SnakeGame;
@@ -69,8 +72,25 @@ pub const SNAKE_TITLE: [u32; 8] = [
     0b_00000000000000000000000000000000,
 ];
 
+pub const LIFE_TITLE: [u32; 8] = [
+    0b_00000000000000000000000000000000,
+    0b_00000000000000000000000000000000,
+    0b_00000101010100101100101010000000,
+    0b_00000101010100100010101010000000,
+    0b_00000111110101101100111011100000,
+    0b_00000101010110100010101010100000,
+    0b_00000101010100101100101011100000,
+    0b_00000000000000000000000000000000,
+];
+
 // Game titles array
-pub const GAME_TITLES: [&[u32; 8]; 4] = [&TETRIS_TITLE, &SNAKE_TITLE, &TANKS_TITLE, &RACES_TITLE];
+pub const GAME_TITLES: [&[u32; 8]; 5] = [
+    &TETRIS_TITLE,
+    &SNAKE_TITLE,
+    &TANKS_TITLE,
+    &RACES_TITLE,
+    &LIFE_TITLE,
+];
 
 /// Run a game menu loop that allows selecting and starting games
 pub async fn run_game_menu<D, C, T, F>(display: &mut D, controller: &mut C, timer: &T, seed_fn: F)
@@ -82,13 +102,20 @@ where
 {
     let mut leds: [RGB8; 256] = [RGB8::default(); 256];
     let mut game_idx: u8 = 0;
+    let num_games = GAME_TITLES.len() as u8;
 
     loop {
-        // Read input for menu navigation
-        let x_input = controller.read_x().await;
-
-        if x_input != 0 {
-            game_idx = game_idx.wrapping_add(x_input as u8) % GAME_TITLES.len() as u8;
+        let delta = controller.read_x().await;
+        if delta != 0 {
+            game_idx = match delta {
+                -1 => (game_idx + num_games - 1) % num_games,
+                1 => (game_idx + 1) % num_games,
+                _ => game_idx,
+            };
+            info!(
+                "Menu navigation: delta={}, selected_game={}",
+                delta, game_idx
+            );
         }
 
         if controller.was_pressed() {
@@ -110,6 +137,10 @@ where
                 3 => {
                     let mut races = RacesGame::new(prng, display, controller, timer);
                     races.run().await;
+                }
+                4 => {
+                    let mut life = LifeGame::new(prng, display, controller, timer);
+                    life.run().await;
                 }
                 _ => {}
             }

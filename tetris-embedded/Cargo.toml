@@ -7,7 +7,7 @@ edition = "2021"
 # This makes the embedded crate independent from the main workspace
 
 [dependencies]
-tetris-lib = { path = "../tetris-lib" }
+tetris-lib = { path = "../tetris-lib", features = ["defmt-log"] }
 embassy-executor = { version = "0.7.0", features = ["arch-cortex-m", "executor-thread", "executor-interrupt", "defmt", "task-arena-size-8192"] }
 embassy-rp = { version = "0.4.0", features = ["defmt", "unstable-pac", "time-driver", "critical-section-impl", "rp2040"] }
 embassy-sync = { version = "0.7.0", features = ["defmt"] }
