@@ -143,7 +143,21 @@ impl Dot {
     }
 }
 
-fn set_pixel(leds: &mut [RGB8], x: usize, y: usize, color_idx: u8) {
+pub fn get_pixel(leds: &[RGB8], x: usize, y: usize) -> u8 {
+    let mut x = x;
+    if y % 2 == 0 {
+        x = 7 - x;
+    }
+    let idx = SCREEN_WIDTH * y + x;
+    for (i, color) in COLORS.iter().enumerate() {
+        if color == &leds[idx] {
+            return i as u8;
+        }
+    }
+    0
+}
+
+pub fn set_pixel(leds: &mut [RGB8], x: usize, y: usize, color_idx: u8) {
     let mut x = x;
     if y % 2 == 0 {
         x = 7 - x;
