@@ -27,7 +27,7 @@ pub const LIGHT_BLUE_IDX: u8 = 5;
 pub const PINK_IDX: u8 = 6;
 pub const YELLOW_IDX: u8 = 7;
 pub const DARK_GREEN_IDX: u8 = 8;
-pub const _LIGHT_GREEN_IDX: u8 = 9;
+pub const LIGHT_GREEN_IDX: u8 = 9;
 
 pub type ColorsType = [RGB8; 10];
 pub const COLORS: ColorsType = [

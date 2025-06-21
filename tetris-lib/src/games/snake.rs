@@ -2,8 +2,8 @@ use smart_leds::RGB8;
 
 use crate::{
     common::{
-        Dot, FrameBuffer, Game, GameController, LedDisplay, Prng, Timer, GREEN_IDX, RED_IDX,
-        SCREEN_HEIGHT, SCREEN_WIDTH,
+        Dot, FrameBuffer, Game, GameController, LedDisplay, Prng, Timer, DARK_GREEN_IDX, GREEN_IDX,
+        LIGHT_GREEN_IDX, PINK_IDX, RED_IDX, SCREEN_HEIGHT, SCREEN_WIDTH,
     },
     digits::DIGITS,
 };
@@ -17,6 +17,7 @@ pub struct SnakeGame<'a, D, C, T> {
     body: [Dot; 256],
     body_len: usize,
     direction: Dot,
+    next_direction: Dot,
     apple: Dot,
     prng: Prng,
     score: u8,
@@ -32,6 +33,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> SnakeGame<'a, D, C, T> {
             body: [Dot::new(0, 0); 256],
             body_len: 3,
             direction: Dot::new(1, 0),
+            next_direction: Dot::new(1, 0),
             apple: Dot::new(0, 0),
             prng,
             score: 0,
@@ -49,7 +51,10 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> SnakeGame<'a, D, C, T> {
     fn respawn_apple(&mut self) {
         loop {
             let x = self.prng.next_range(SCREEN_WIDTH as u8) as i8;
-            let y = self.prng.next_range(SCREEN_HEIGHT as u8) as i8;
+            let y = self
+                .prng
+                .next_range(SCREEN_HEIGHT as u8)
+                .clamp(6, SCREEN_HEIGHT as u8) as i8;
             let new_apple = Dot::new(x, y);
 
             // Check if apple spawns on snake body
@@ -69,6 +74,9 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> SnakeGame<'a, D, C, T> {
     }
 
     fn move_forward(&mut self) -> bool {
+        if !self.direction.is_opposite(&self.next_direction) {
+            self.direction = self.next_direction;
+        }
         let head = self.body[0];
         let new_head = head.move_wrap(self.direction);
 
@@ -99,41 +107,26 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> SnakeGame<'a, D, C, T> {
     }
 
     fn draw_snake(&mut self) {
-        // Clear screen
-        self.screen.clear();
-
-        // Draw snake body
         for i in 0..self.body_len {
             let dot = self.body[i];
-            self.screen.set(dot.x as usize, dot.y as usize, GREEN_IDX);
+            let color = match i {
+                0 => LIGHT_GREEN_IDX,
+                i if i == self.body_len - 1 => DARK_GREEN_IDX,
+                _ => GREEN_IDX,
+            };
+            self.screen.set(dot.x as usize, dot.y as usize, color);
         }
-
-        // Draw apple
-        self.screen
-            .set(self.apple.x as usize, self.apple.y as usize, RED_IDX);
-
-        // Draw score
-        self.draw_score();
     }
 
     fn draw_score(&mut self) {
-        let mut score = self.score;
-        let mut digits = [0u8; 4];
-        let mut count = 0;
+        let score_display = (self.score % 100) as usize;
+        let tens = score_display / 10;
+        let ones = score_display % 10;
 
-        while score > 0 && count < digits.len() {
-            digits[count] = score % 10;
-            score /= 10;
-            count += 1;
-        }
-
-        for i in (0..count).rev() {
-            self.screen.draw_figure(
-                ((count - 1 - i) * 4).try_into().unwrap(),
-                0,
-                &DIGITS[digits[i] as usize],
-                GREEN_IDX,
-            );
+        self.screen.draw_figure(0, 0, &DIGITS[tens], GREEN_IDX);
+        self.screen.draw_figure(4, 0, &DIGITS[ones], GREEN_IDX);
+        for x in 0..SCREEN_WIDTH {
+            self.screen.set(x, 5, PINK_IDX);
         }
     }
 
@@ -145,6 +138,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> SnakeGame<'a, D, C, T> {
             self.timer.sleep_millis(200).await;
 
             self.draw_snake();
+            self.draw_score();
             self.screen.render(&mut leds);
             self.display.write(&leds).await;
             self.timer.sleep_millis(200).await;
@@ -161,25 +155,27 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for SnakeGame<'a, D, C
     async fn run(&mut self) {
         let mut leds = [RGB8::new(0, 0, 0); 256];
         let mut step = 30;
-        let mut speedup = 1;
+        let mut speedup;
 
         loop {
             // Handle joystick input
             let x = self.controller.read_x().await;
             let y = self.controller.read_y().await;
-            let new_dir = Dot::new(x, y).to_direction();
+            let direction = Dot::new(x, y).to_direction();
+            if !direction.is_zero() {
+                self.next_direction = direction;
+            }
 
-            if !new_dir.is_zero() {
-                if !new_dir.is_opposite(&self.direction) {
-                    // If pressing same direction as current movement, speed up
-                    if new_dir.x == self.direction.x && new_dir.y == self.direction.y {
-                        speedup = 5;
-                    }
-                    self.direction = new_dir;
-                }
+            if self.direction == direction {
+                speedup = 5;
             } else {
                 // Reset to normal speed when no direction is pressed
                 speedup = 1;
+            }
+            // Adjust the snake's speed based on the score.
+            speedup += self.score / 10;
+            if self.score > 99 {
+                self.score = 0;
             }
 
             if step >= 30 {
@@ -191,7 +187,12 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for SnakeGame<'a, D, C
                 }
 
                 // Draw and update display
+                self.screen.clear();
+                self.draw_score();
                 self.draw_snake();
+                // Draw apple
+                self.screen
+                    .set(self.apple.x as usize, self.apple.y as usize, RED_IDX);
                 self.screen.render(&mut leds);
                 self.display.write(&leds).await;
             }
