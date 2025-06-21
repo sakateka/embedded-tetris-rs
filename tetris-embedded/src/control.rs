@@ -16,21 +16,17 @@ impl ButtonController {
     }
 
     pub async fn run(&mut self) -> ! {
-        let mut last_state = false;
         loop {
-            let current_state = self.button.is_low();
-            if current_state && !last_state {
-                // Button pressed (falling edge)
-                BUTTON_SIGNAL.signal(true);
-            }
-            last_state = current_state;
-            embassy_time::Timer::after_millis(10).await;
+            // Wait for falling edge interrupt (button press)
+            self.button.wait_for_falling_edge().await;
+
+            // Signal that button was pressed
+            BUTTON_SIGNAL.signal(true);
+
+            // Optional: Add small delay to debounce
+            embassy_time::Timer::after_millis(200).await;
         }
     }
-}
-
-pub async fn _wait_for_button_press() -> bool {
-    BUTTON_SIGNAL.wait().await
 }
 
 fn button_was_pressed() -> bool {
@@ -65,8 +61,8 @@ impl<'a> Joystick<'a> {
     pub async fn read_x(&mut self) -> i8 {
         let adc_val = self.adc.read(&mut self.pin_x).await.unwrap();
         match adc_val {
-            0..=1800 => 1,
-            2300..=4096 => -1,
+            0..=1600 => 1,
+            2500..=4096 => -1,
             _ => 0,
         }
     }
@@ -74,8 +70,8 @@ impl<'a> Joystick<'a> {
     pub async fn read_y(&mut self) -> i8 {
         let adc_val = self.adc.read(&mut self.pin_y).await.unwrap();
         match adc_val {
-            0..=1800 => -1,
-            2300..=4096 => 1,
+            0..=1600 => -1,
+            2500..=4096 => 1,
             _ => 0,
         }
     }

@@ -121,6 +121,6 @@ where
         screen.render(&mut leds);
         display.write(&leds).await;
 
-        timer.sleep_millis(100).await;
+        timer.sleep_millis(200).await;
     }
 }

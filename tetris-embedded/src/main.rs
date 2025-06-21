@@ -78,5 +78,6 @@ async fn main(spawner: Spawner) {
     info!("Starting main menu loop");
     run_game_menu(&mut display, &mut joystick, &timer, || {
         Instant::now().as_ticks() as u32
-    }).await;
+    })
+    .await;
 }
