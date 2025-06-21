@@ -170,7 +170,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for TetrisGame<'a, D, 
     async fn run(&mut self) {
         let mut x = self.init_x;
         let mut y = self.init_y;
-        let mut ipass = 0;
+        let mut ipass: i8 = 0;
 
         let mut curr_idx = self.prng.next_range(7);
         let mut next_idx = self.prng.next_range(7);
@@ -178,15 +178,21 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for TetrisGame<'a, D, 
         let mut next = TETRAMINO.wrapping_at(next_idx);
         let mut leds: [RGB8; 256] = [RGB8::default(); 256];
 
+        let mut ipass_x_move = ipass;
         loop {
             if ipass >= 10 {
+                ipass_x_move = if ipass_x_move < ipass { -2 } else { 0 };
                 ipass = 0;
                 y += 1;
             }
 
             // Read joystick
             let x_diff = self.controller.read_x().await;
-            let new_x = x + x_diff;
+            let mut new_x = x + x_diff;
+            if ipass_x_move + 1 < ipass {
+                new_x = x;
+                ipass_x_move = ipass;
+            }
 
             if new_x >= 0 && new_x < SCREEN_WIDTH as i8 && !self.concrete.collides(new_x, y, &curr)
             {
@@ -256,9 +262,9 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for TetrisGame<'a, D, 
                 self.score = 0;
             }
 
-            let speed_bonus = (self.score / 10).max(1);
+            let speed_bonus = (self.score / 2 / 10).max(1) as i8;
             let y_input = self.controller.read_y().await;
-            let down_bonus = if y_input > 0 { 10 } else { 0 };
+            let down_bonus: i8 = if y_input > 0 { 10 } else { 0 };
 
             ipass += speed_bonus + down_bonus;
             self.timer.sleep_millis(50).await;
