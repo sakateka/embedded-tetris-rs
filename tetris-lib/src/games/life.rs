@@ -236,6 +236,9 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for LifeGame<'a, D, C,
         let delay = 50;
 
         let mut leds = [RGB8::new(0, 0, 0); 256];
+        let mut last_x_input = 0;
+        let mut last_y_input = 0;
+        let mut cursor_move_counter: u8 = 0;
 
         loop {
             // Handle input based on current state
@@ -275,17 +278,32 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for LifeGame<'a, D, C,
                     let x_delta = self.controller.read_x().await;
                     let y_delta = self.controller.read_y().await;
 
-                    if x_delta != 0 {
-                        let new_x =
-                            (self.cursor_x as i8 + x_delta).clamp(0, SCREEN_WIDTH as i8 - 1);
-                        self.cursor_x = new_x as usize;
+                    // Update cursor movement counter
+                    cursor_move_counter = cursor_move_counter.wrapping_add(1);
+
+                    // Check if input direction changed (immediate response)
+                    let input_changed = x_delta != last_x_input || y_delta != last_y_input;
+
+                    // Allow movement on input change OR every 8 frames for held input
+                    let should_move = input_changed || (cursor_move_counter % 8 == 0);
+
+                    if should_move {
+                        if x_delta != 0 {
+                            let new_x =
+                                (self.cursor_x as i8 + x_delta).clamp(0, SCREEN_WIDTH as i8 - 1);
+                            self.cursor_x = new_x as usize;
+                        }
+
+                        if y_delta != 0 {
+                            let new_y =
+                                (self.cursor_y as i8 + y_delta).clamp(6, SCREEN_HEIGHT as i8 - 1);
+                            self.cursor_y = new_y as usize;
+                        }
                     }
 
-                    if y_delta != 0 {
-                        let new_y =
-                            (self.cursor_y as i8 + y_delta).clamp(6, SCREEN_HEIGHT as i8 - 1);
-                        self.cursor_y = new_y as usize;
-                    }
+                    // Update last input state
+                    last_x_input = x_delta;
+                    last_y_input = y_delta;
 
                     // Toggle cell with joystick press
                     if self.controller.joystick_was_pressed() {
