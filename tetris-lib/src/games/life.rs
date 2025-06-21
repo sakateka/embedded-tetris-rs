@@ -5,7 +5,6 @@ use crate::{
         FrameBuffer, Game, GameController, LedDisplay, Prng, Timer, BLACK_IDX, BRICK_IDX,
         GREEN_IDX, PINK_IDX, SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
     },
-    digits::DIGITS,
     log::{debug, info},
 };
 
@@ -169,15 +168,23 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
                 self.screen.set(4, y, YELLOW_IDX);
             }
         } else {
-            // Display pattern number (0-5)
-            let pattern_digit = self.pattern_index % 10;
-            self.screen
-                .draw_figure(0, 0, &DIGITS[pattern_digit], GREEN_IDX);
+            // Display pattern index as individual pixels (one pixel per pattern)
+            for i in 0..self.pattern_index {
+                self.screen
+                    .set(i % SCREEN_WIDTH, i / SCREEN_WIDTH, GREEN_IDX);
+            }
 
-            // Show generation indicator (simplified)
-            let gen_indicator = ((self.generation / 10) % 10) as usize; // Show progress as single digit
-            self.screen
-                .draw_figure(4, 0, &DIGITS[gen_indicator], GREEN_IDX);
+            let mut available_row = self.pattern_index / SCREEN_WIDTH;
+            if self.pattern_index % SCREEN_WIDTH > 0 {
+                available_row += 1;
+            }
+            if available_row < 5 {
+                // Show generation progress as pixels on available space
+                let gen_progress = ((self.generation / 10) % SCREEN_WIDTH as u32) as usize;
+                for i in 0..gen_progress.min(SCREEN_WIDTH) {
+                    self.screen.set(i, available_row, YELLOW_IDX);
+                }
+            }
         }
 
         // Draw horizontal line
@@ -246,14 +253,105 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for LifeGame<'a, D, C,
 static PATTERNS: &[Option<&[(i8, i8)]>] = &[
     // Random pattern
     None,
-    // Glider
+    // Glider - moves diagonally
     Some(&[(1, 8), (2, 9), (0, 10), (1, 10), (2, 10)]),
-    // Blinker
+    // Blinker - simple period-2 oscillator
     Some(&[(3, 10), (3, 11), (3, 12)]),
-    // Block
+    // Block - still life
     Some(&[(3, 10), (4, 10), (3, 11), (4, 11)]),
-    // Toad
+    // Toad - period-2 oscillator
     Some(&[(2, 10), (3, 10), (4, 10), (1, 11), (2, 11), (3, 11)]),
-    // Beacon
+    // Beacon - period-2 oscillator
     Some(&[(1, 8), (2, 8), (1, 9), (4, 10), (3, 11), (4, 11)]),
+    // Lightweight Spaceship (LWSS) - travels horizontally
+    Some(&[
+        (1, 10),
+        (4, 10),
+        (0, 11),
+        (0, 12),
+        (0, 13),
+        (4, 13),
+        (3, 14),
+        (2, 14),
+        (1, 14),
+        (0, 14),
+    ]),
+    // Pulsar (small version) - period-3 oscillator
+    Some(&[(2, 8), (3, 8), (4, 8), (2, 13), (3, 13), (4, 13)]),
+    // R-pentomino - famous methuselah (creates chaos then stabilizes)
+    Some(&[(3, 10), (4, 10), (2, 11), (3, 11), (3, 12)]),
+    // Acorn - methuselah that takes 5206 generations to stabilize
+    Some(&[
+        (1, 10),
+        (3, 11),
+        (0, 12),
+        (1, 12),
+        (4, 12),
+        (5, 12),
+        (6, 12),
+    ]),
+    // Diehard - dies after exactly 130 generations
+    Some(&[
+        (6, 10),
+        (0, 11),
+        (1, 11),
+        (1, 12),
+        (5, 12),
+        (6, 12),
+        (7, 12),
+    ]),
+    // Clock - period-2 oscillator
+    Some(&[(2, 10), (3, 10), (1, 11), (4, 11), (2, 12), (3, 12)]),
+    // Penta-decathlon (mini version) - long period oscillator
+    Some(&[
+        (3, 8),
+        (3, 9),
+        (2, 10),
+        (4, 10),
+        (3, 11),
+        (3, 12),
+        (3, 13),
+        (3, 14),
+        (2, 15),
+        (4, 15),
+        (3, 16),
+        (3, 17),
+    ]),
+    // Gosper Glider Gun (tiny version) - creates gliders
+    Some(&[
+        (0, 10),
+        (1, 10),
+        (0, 11),
+        (1, 11),
+        (2, 12),
+        (3, 12),
+        (4, 12),
+        (5, 13),
+        (6, 14),
+        (7, 14),
+    ]),
+    // Twin bees shuttle (small version) - period-46 oscillator
+    Some(&[
+        (1, 10),
+        (3, 10),
+        (0, 11),
+        (4, 11),
+        (0, 12),
+        (4, 12),
+        (1, 13),
+        (3, 13),
+    ]),
+    // Figure eight - period-8 oscillator
+    Some(&[
+        (1, 10),
+        (2, 10),
+        (3, 10),
+        (0, 11),
+        (3, 11),
+        (0, 12),
+        (3, 12),
+        (1, 13),
+        (2, 13),
+        (3, 13),
+    ]),
 ];
