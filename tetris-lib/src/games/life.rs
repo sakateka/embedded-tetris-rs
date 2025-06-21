@@ -249,7 +249,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for LifeGame<'a, D, C,
     }
 }
 
-// Define some classic Conway patterns
+// Define Conway patterns showcasing different behaviors
 static PATTERNS: &[Option<&[(i8, i8)]>] = &[
     // Random pattern
     None,
@@ -257,101 +257,84 @@ static PATTERNS: &[Option<&[(i8, i8)]>] = &[
     Some(&[(1, 8), (2, 9), (0, 10), (1, 10), (2, 10)]),
     // Blinker - simple period-2 oscillator
     Some(&[(3, 10), (3, 11), (3, 12)]),
-    // Block - still life
-    Some(&[(3, 10), (4, 10), (3, 11), (4, 11)]),
     // Toad - period-2 oscillator
     Some(&[(2, 10), (3, 10), (4, 10), (1, 11), (2, 11), (3, 11)]),
     // Beacon - period-2 oscillator
     Some(&[(1, 8), (2, 8), (1, 9), (4, 10), (3, 11), (4, 11)]),
     // Lightweight Spaceship (LWSS) - travels horizontally
     Some(&[
-        (1, 10),
-        (4, 10),
-        (0, 11),
-        (0, 12),
-        (0, 13),
-        (4, 13),
-        (3, 14),
-        (2, 14),
-        (1, 14),
-        (0, 14),
+        (1, 10), (4, 10), (0, 11), (0, 12), (0, 13), (4, 13),
+        (3, 14), (2, 14), (1, 14), (0, 14),
     ]),
     // Pulsar (small version) - period-3 oscillator
     Some(&[(2, 8), (3, 8), (4, 8), (2, 13), (3, 13), (4, 13)]),
     // R-pentomino - famous methuselah (creates chaos then stabilizes)
     Some(&[(3, 10), (4, 10), (2, 11), (3, 11), (3, 12)]),
     // Acorn - methuselah that takes 5206 generations to stabilize
-    Some(&[
-        (1, 10),
-        (3, 11),
-        (0, 12),
-        (1, 12),
-        (4, 12),
-        (5, 12),
-        (6, 12),
-    ]),
+    Some(&[(1, 10), (3, 11), (0, 12), (1, 12), (4, 12), (5, 12), (6, 12)]),
     // Diehard - dies after exactly 130 generations
-    Some(&[
-        (6, 10),
-        (0, 11),
-        (1, 11),
-        (1, 12),
-        (5, 12),
-        (6, 12),
-        (7, 12),
-    ]),
+    Some(&[(6, 10), (0, 11), (1, 11), (1, 12), (5, 12), (6, 12), (7, 12)]),
     // Clock - period-2 oscillator
     Some(&[(2, 10), (3, 10), (1, 11), (4, 11), (2, 12), (3, 12)]),
     // Penta-decathlon (mini version) - long period oscillator
     Some(&[
-        (3, 8),
-        (3, 9),
-        (2, 10),
-        (4, 10),
-        (3, 11),
-        (3, 12),
-        (3, 13),
-        (3, 14),
-        (2, 15),
-        (4, 15),
-        (3, 16),
-        (3, 17),
+        (3, 8), (3, 9), (2, 10), (4, 10), (3, 11), (3, 12),
+        (3, 13), (3, 14), (2, 15), (4, 15), (3, 16), (3, 17),
     ]),
     // Gosper Glider Gun (tiny version) - creates gliders
     Some(&[
-        (0, 10),
-        (1, 10),
-        (0, 11),
-        (1, 11),
-        (2, 12),
-        (3, 12),
-        (4, 12),
-        (5, 13),
-        (6, 14),
-        (7, 14),
+        (0, 10), (1, 10), (0, 11), (1, 11), (2, 12), (3, 12),
+        (4, 12), (5, 13), (6, 14), (7, 14),
     ]),
     // Twin bees shuttle (small version) - period-46 oscillator
-    Some(&[
-        (1, 10),
-        (3, 10),
-        (0, 11),
-        (4, 11),
-        (0, 12),
-        (4, 12),
-        (1, 13),
-        (3, 13),
-    ]),
+    Some(&[(1, 10), (3, 10), (0, 11), (4, 11), (0, 12), (4, 12), (1, 13), (3, 13)]),
     // Figure eight - period-8 oscillator
     Some(&[
-        (1, 10),
-        (2, 10),
-        (3, 10),
-        (0, 11),
-        (3, 11),
-        (0, 12),
-        (3, 12),
-        (1, 13),
-        (2, 13),
-        (3, 13),
+        (1, 10), (2, 10), (3, 10), (0, 11), (3, 11),
+        (0, 12), (3, 12), (1, 13), (2, 13), (3, 13),
     ]),
+    // Beehive - still life (more interesting than block)
+    Some(&[(2, 10), (3, 10), (1, 11), (4, 11), (2, 12), (3, 12)]),
+    // Traffic lights - period-2 oscillator
+    Some(&[(1, 9), (2, 9), (1, 10), (4, 11), (5, 11), (4, 12)]),
+    // Pentaplex - complex period-2 oscillator
+    Some(&[
+        (2, 8), (3, 8), (1, 9), (4, 9), (0, 10), (5, 10),
+        (1, 11), (4, 11), (2, 12), (3, 12),
+    ]),
+    // B-heptomino - interesting methuselah
+    Some(&[(2, 10), (3, 10), (1, 11), (2, 11), (2, 12), (3, 12), (4, 12)]),
+    // Pi-heptomino - creates two gliders
+    Some(&[(1, 10), (2, 10), (3, 10), (1, 11), (3, 11), (1, 12), (3, 12)]),
+    // Galaxy - amazing 4-fold rotational pattern
+    Some(&[
+        (1, 8), (2, 8), (1, 9), (2, 9), (1, 10), (2, 10),
+        (5, 11), (6, 11), (5, 12), (6, 12), (5, 13), (6, 13),
+    ]),
+    // Boat - small still life
+    Some(&[(1, 10), (2, 10), (1, 11), (3, 11), (2, 12)]),
+    // Loaf - classic still life
+    Some(&[(2, 9), (3, 9), (1, 10), (4, 10), (2, 11), (4, 11), (3, 12)]),
+    // Hammer - period-14 oscillator
+    Some(&[(1, 10), (3, 10), (2, 11), (1, 12), (3, 12)]),
+    // Cross - period-3 oscillator
+    Some(&[(3, 9), (2, 10), (3, 10), (4, 10), (3, 11)]),
+    // Pinwheel - period-4 oscillator
+    Some(&[
+        (2, 9), (3, 9), (1, 10), (4, 10), (1, 11), (4, 11),
+        (2, 12), (3, 12),
+    ]),
+    // Rabbits - methuselah that creates infinite growth
+    Some(&[(0, 10), (2, 10), (3, 11), (0, 12), (1, 12), (3, 12), (4, 12)]),
+    // Switch engine (small version) - creates infinite growth
+    Some(&[(1, 10), (3, 10), (4, 11), (1, 12), (5, 12), (1, 13), (2, 13), (3, 13)]),
+    // Max - methuselah that settles after 312 generations
+    Some(&[(1, 10), (3, 10), (0, 11), (4, 11), (0, 12), (1, 12), (2, 12), (3, 12)]),
+    // Octagon II - period-5 oscillator
+    Some(&[
+        (2, 8), (3, 8), (1, 9), (4, 9), (0, 10), (5, 10),
+        (0, 11), (5, 11), (1, 12), (4, 12), (2, 13), (3, 13),
+    ]),
+    // Thunderbird - methuselah
+    Some(&[(1, 10), (2, 10), (3, 10), (2, 11), (2, 12), (2, 13)]),
 ];
