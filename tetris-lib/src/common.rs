@@ -302,7 +302,9 @@ pub trait LedDisplay {
 pub trait GameController {
     async fn read_x(&mut self) -> i8;
     async fn read_y(&mut self) -> i8;
-    fn was_pressed(&self) -> bool;
+    fn joystick_was_pressed(&self) -> bool;
+    fn a_was_pressed(&self) -> bool;
+    fn b_was_pressed(&self) -> bool;
 }
 
 /// Game trait for different game implementations - using generics to avoid dyn issues

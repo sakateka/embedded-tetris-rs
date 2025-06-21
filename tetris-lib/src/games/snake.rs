@@ -145,7 +145,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> SnakeGame<'a, D, C, T> {
         }
 
         // Wait for button press
-        while !self.controller.was_pressed() {
+        while !self.controller.joystick_was_pressed() {
             self.timer.sleep_millis(50).await;
         }
     }

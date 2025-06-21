@@ -469,7 +469,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> TanksGame<'a, D, C, T> {
     }
 
     async fn game_over(&mut self, mut leds: [RGB8; 256]) {
-        while !self.controller.was_pressed() {
+        while !self.controller.joystick_was_pressed() {
             let x = self.prng.next_range(SCREEN_WIDTH as u8);
             let y = self.prng.next_range(SCREEN_HEIGHT as u8);
             let color = self.prng.next_range(COLORS.len() as u8);
@@ -503,7 +503,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for TanksGame<'a, D, C
                 return;
             }
 
-            if self.controller.was_pressed() {
+            if self.controller.joystick_was_pressed() {
                 self.tank.fire();
             }
 

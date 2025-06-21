@@ -463,7 +463,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> RacesGame<'a, D, C, T> {
         }
 
         // Wait for button press
-        while !self.controller.was_pressed() {
+        while !self.controller.joystick_was_pressed() {
             self.timer.sleep_millis(50).await;
         }
     }
@@ -487,7 +487,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for RacesGame<'a, D, C
 
         loop {
             // Fire bullet on button press
-            if self.controller.was_pressed()
+            if self.controller.joystick_was_pressed()
                 && self.bullet_count < self.bullets.len()
                 && self.max_bullets > 0
             {

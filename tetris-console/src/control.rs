@@ -2,6 +2,7 @@ use std::io::{self, Read};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tetris_lib::common::GameController;
+use tetris_lib::log::debug;
 
 // Store original terminal state for restoration
 static mut ORIGINAL_TERMIOS: Option<libc::termios> = None;
@@ -66,6 +67,8 @@ enum KeyEvent {
     Space,
     Enter,
     Quit,
+    ButtonA,
+    ButtonB,
     None,
 }
 
@@ -114,19 +117,20 @@ impl SimpleConsoleController {
         match stdin.read(&mut buffer) {
             Ok(1) => {
                 let ch = buffer[0];
+                debug!("Key code {}", ch);
                 match ch {
                     27 => {
                         let mut seq = [0; 2];
-                        if stdin.read(&mut seq).unwrap_or(0) == 2 {
-                            match seq {
+                        match stdin.read(&mut seq).unwrap_or(0) {
+                            2 => match seq {
                                 [91, 65] => KeyEvent::Up,    // [A
                                 [91, 66] => KeyEvent::Down,  // [B
                                 [91, 67] => KeyEvent::Right, // [C
                                 [91, 68] => KeyEvent::Left,  // [D
                                 _ => KeyEvent::None,
-                            }
-                        } else {
-                            KeyEvent::None
+                            },
+                            0 => KeyEvent::Quit, // just ESC
+                            _ => KeyEvent::None,
                         }
                     }
                     b' ' => KeyEvent::Space,
@@ -135,8 +139,12 @@ impl SimpleConsoleController {
                     b'd' | b'D' => KeyEvent::Right,
                     b'w' | b'W' => KeyEvent::Up,
                     b's' | b'S' => KeyEvent::Down,
-                    b'q' | b'Q' => KeyEvent::Quit,
-                    _ => KeyEvent::None,
+                    b'q' | b'Q' => KeyEvent::ButtonA,
+                    b'e' | b'E' => KeyEvent::ButtonB,
+                    _ => {
+                        debug!("Unknown key code {}", ch);
+                        KeyEvent::None
+                    }
                 }
             }
             _ => KeyEvent::None,
@@ -179,12 +187,38 @@ impl GameController for SimpleConsoleController {
         }
     }
 
-    fn was_pressed(&self) -> bool {
+    fn joystick_was_pressed(&self) -> bool {
         let mut key_guard = self.current_key.lock().unwrap();
         let key = key_guard.clone();
 
         match key {
             KeyEvent::Space | KeyEvent::Enter => {
+                *key_guard = KeyEvent::None; // Clear the key since we consumed it
+                true
+            }
+            _ => false, // No button press detected
+        }
+    }
+
+    fn a_was_pressed(&self) -> bool {
+        let mut key_guard = self.current_key.lock().unwrap();
+        let key = key_guard.clone();
+
+        match key {
+            KeyEvent::ButtonA => {
+                *key_guard = KeyEvent::None; // Clear the key since we consumed it
+                true
+            }
+            _ => false, // No button press detected
+        }
+    }
+
+    fn b_was_pressed(&self) -> bool {
+        let mut key_guard = self.current_key.lock().unwrap();
+        let key = key_guard.clone();
+
+        match key {
+            KeyEvent::ButtonB => {
                 *key_guard = KeyEvent::None; // Clear the key since we consumed it
                 true
             }

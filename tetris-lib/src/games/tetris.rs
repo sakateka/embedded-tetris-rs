@@ -115,7 +115,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> TetrisGame<'a, D, C, T> {
         last_figure: &Figure,
         last_color: u8,
     ) {
-        while !self.controller.was_pressed() {
+        while !self.controller.joystick_was_pressed() {
             // Preserve the concrete blocks and score
             self.screen.copy_from(&self.concrete);
             self.draw_score();
@@ -173,7 +173,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for TetrisGame<'a, D, 
                 x = new_x;
             }
 
-            if self.controller.was_pressed() {
+            if self.controller.joystick_was_pressed() {
                 let rotated = curr.rotate();
                 let shift = if rotated.height() > rotated.width()
                     && x + rotated.width() as i8 >= SCREEN_WIDTH as i8

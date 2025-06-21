@@ -2,8 +2,8 @@ use smart_leds::RGB8;
 
 use crate::{
     common::{
-        FrameBuffer, Game, GameController, LedDisplay, Prng, Timer, BLACK_IDX, GREEN_IDX, PINK_IDX,
-        SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
+        FrameBuffer, Game, GameController, LedDisplay, Prng, Timer, BLACK_IDX, BRICK_IDX,
+        GREEN_IDX, PINK_IDX, SCREEN_HEIGHT, SCREEN_WIDTH, YELLOW_IDX,
     },
     digits::DIGITS,
     log::{debug, info},
@@ -153,7 +153,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
         }
     }
 
-    fn draw_ui(&mut self) {
+    fn draw_ui(&mut self, speed: u8) {
         // Clear score area
         for x in 0..SCREEN_WIDTH {
             for y in 0..5 {
@@ -184,49 +184,60 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
         for x in 0..SCREEN_WIDTH {
             self.screen.set(x, 5, PINK_IDX);
         }
+        for x in 0..(speed * 2) {
+            if x & 1 == 1 {
+                continue;
+            }
+            self.screen.set(x.into(), 5, BRICK_IDX);
+        }
     }
 }
 
 impl<'a, D: LedDisplay, C: GameController, T: Timer> Game for LifeGame<'a, D, C, T> {
     async fn run(&mut self) {
         let mut step = 0;
-        let mut speed = 20; // Steps between generations (lower = faster)
+        let round: u8 = 20;
+        let mut speed: u8 = 1;
+        let delay = 50;
+
         let mut leds = [RGB8::new(0, 0, 0); 256];
 
         loop {
             // Handle input
-            if self.controller.was_pressed() {
+            if self.controller.joystick_was_pressed() {
                 self.paused = !self.paused;
             }
 
             // Cycle through patterns with X axis
-            let x_input = self.controller.read_x().await;
-            if x_input != 0 {
+            if !self.paused && self.controller.a_was_pressed() {
                 self.next_pattern();
                 self.paused = false;
             }
 
             // Speed control with joystick Y
-            let y_input = self.controller.read_y().await;
-            if y_input > 0 {
-                speed = (speed + 5).min(50); // Slower
-            } else if y_input < 0 {
-                speed = (speed - 5).max(5); // Faster
+            if self.paused {
+                if self.controller.a_was_pressed() {
+                    speed = speed.saturating_sub(1).clamp(1, 4);
+                    info!("Speed has increased to {}", speed);
+                } else if self.controller.b_was_pressed() {
+                    speed = speed.saturating_add(1).clamp(1, 4);
+                    info!("Speed has dropped to {}", speed);
+                }
             }
 
             // Update generation
-            if !self.paused && step >= speed {
+            if !self.paused && step >= round / speed {
                 self.next_generation();
                 step = 0;
             }
 
             // Draw everything
-            self.draw_ui();
+            self.draw_ui(speed);
             self.screen.render(&mut leds);
             self.display.write(&leds).await;
 
             step += 1;
-            self.timer.sleep_millis(50).await;
+            self.timer.sleep_millis(delay as u64).await;
         }
     }
 }

@@ -118,7 +118,7 @@ where
             );
         }
 
-        if controller.was_pressed() {
+        if controller.joystick_was_pressed() {
             let seed = seed_fn();
             let prng = Prng::new(seed);
             match game_idx {

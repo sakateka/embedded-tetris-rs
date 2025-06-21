@@ -1,7 +1,9 @@
 #![no_std]
 #![no_main]
 
-use crate::control::{button_task, ButtonController, Joystick};
+use crate::control::{
+    button_a_task, button_b_task, joystick_button_task, ButtonHardware, Control, Joystick,
+};
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_rp::adc::InterruptHandler as AdcInterruptHandler;
@@ -63,20 +65,33 @@ async fn main(spawner: Spawner) {
     let ws2812 = PioWs2812::new(&mut common, sm0, p.DMA_CH0, p.PIN_13, &program);
     let mut display = Ws2812Display::new(ws2812);
 
+    // Hardware setup
     let adc_reader = Adc::new(p.ADC, Irqs, Config::default());
     let adc_pin_x = Channel::new_pin(p.PIN_27, Pull::None);
     let adc_pin_y = Channel::new_pin(p.PIN_28, Pull::None);
-    let button_pin = Input::new(p.PIN_16, Pull::Up);
-    let button_controller = ButtonController::new(button_pin);
+    let joystick_push_pin = Input::new(p.PIN_16, Pull::Up);
+    let button_a_pin = Input::new(p.PIN_0, Pull::Up);
+    let button_b_pin = Input::new(p.PIN_1, Pull::Up);
 
-    // Spawn button task
-    spawner.spawn(button_task(button_controller)).unwrap();
+    // Create hardware button controllers
+    let joystick_button_hw = ButtonHardware::new_joystick_button(joystick_push_pin);
+    let button_a_hw = ButtonHardware::new_button_a(button_a_pin);
+    let button_b_hw = ButtonHardware::new_button_b(button_b_pin);
 
-    let mut joystick = Joystick::new(adc_reader, adc_pin_x, adc_pin_y);
+    // Spawn button tasks - these will run independently and signal through static signals
+    spawner
+        .spawn(joystick_button_task(joystick_button_hw))
+        .unwrap();
+    spawner.spawn(button_a_task(button_a_hw)).unwrap();
+    spawner.spawn(button_b_task(button_b_hw)).unwrap();
+
+    // Create game controller (no longer needs to own button hardware)
+    let joystick = Joystick::new(adc_reader, adc_pin_x, adc_pin_y);
+    let mut control = Control::new(joystick);
     let timer = EmbeddedTimer;
 
     info!("Starting main menu loop");
-    run_game_menu(&mut display, &mut joystick, &timer, || {
+    run_game_menu(&mut display, &mut control, &timer, || {
         Instant::now().as_ticks() as u32
     })
     .await;

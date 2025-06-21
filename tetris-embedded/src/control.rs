@@ -4,41 +4,70 @@ use embassy_rp::gpio::Input;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 
-static BUTTON_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+// Shared signals accessible from multiple tasks
+pub static JOYSTICK_BUTTON_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+pub static BUTTON_A_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+pub static BUTTON_B_SIGNAL: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
-pub struct ButtonController {
+// Hardware button wrapper for running in tasks
+pub struct ButtonHardware {
     button: Input<'static>,
+    signal: &'static Signal<CriticalSectionRawMutex, bool>,
 }
 
-impl ButtonController {
-    pub fn new(button: Input<'static>) -> Self {
-        Self { button }
+impl ButtonHardware {
+    pub fn new_joystick_button(button: Input<'static>) -> Self {
+        Self {
+            button,
+            signal: &JOYSTICK_BUTTON_SIGNAL,
+        }
     }
 
-    pub async fn run(&mut self) -> ! {
+    pub fn new_button_a(button: Input<'static>) -> Self {
+        Self {
+            button,
+            signal: &BUTTON_A_SIGNAL,
+        }
+    }
+
+    pub fn new_button_b(button: Input<'static>) -> Self {
+        Self {
+            button,
+            signal: &BUTTON_B_SIGNAL,
+        }
+    }
+
+    pub async fn run(mut self) -> ! {
         loop {
             // Wait for falling edge interrupt (button press)
             self.button.wait_for_falling_edge().await;
 
             // Signal that button was pressed
-            BUTTON_SIGNAL.signal(true);
+            self.signal.signal(true);
 
-            // Optional: Add small delay to debounce
+            // Debounce delay
             embassy_time::Timer::after_millis(200).await;
         }
     }
 }
 
-fn button_was_pressed() -> bool {
-    BUTTON_SIGNAL.try_take().unwrap_or(false)
+// Tasks for handling hardware buttons
+#[embassy_executor::task]
+pub async fn joystick_button_task(button_hardware: ButtonHardware) {
+    button_hardware.run().await;
 }
 
 #[embassy_executor::task]
-pub async fn button_task(mut button_controller: ButtonController) {
-    button_controller.run().await;
+pub async fn button_a_task(button_hardware: ButtonHardware) {
+    button_hardware.run().await;
 }
 
-// Joystick handling
+#[embassy_executor::task]
+pub async fn button_b_task(button_hardware: ButtonHardware) {
+    button_hardware.run().await;
+}
+
+// Joystick controller that doesn't own the button
 pub struct Joystick<'a> {
     adc: Adc<'a, embassy_rp::adc::Async>,
     pin_x: Channel<'a>,
@@ -75,23 +104,38 @@ impl<'a> Joystick<'a> {
             _ => 0,
         }
     }
+}
 
-    pub fn was_pressed(&self) -> bool {
-        button_was_pressed()
+// Main game controller that uses shared signals
+pub struct Control<'a> {
+    joystick: Joystick<'a>,
+}
+
+impl<'a> Control<'a> {
+    pub fn new(joystick: Joystick<'a>) -> Self {
+        Self { joystick }
     }
 }
 
-// Implement the GameController trait for Joystick
-impl<'a> tetris_lib::common::GameController for Joystick<'a> {
+// Implement the GameController trait
+impl<'a> tetris_lib::common::GameController for Control<'a> {
     async fn read_x(&mut self) -> i8 {
-        self.read_x().await
+        self.joystick.read_x().await
     }
 
     async fn read_y(&mut self) -> i8 {
-        self.read_y().await
+        self.joystick.read_y().await
     }
 
-    fn was_pressed(&self) -> bool {
-        self.was_pressed()
+    fn joystick_was_pressed(&self) -> bool {
+        JOYSTICK_BUTTON_SIGNAL.try_take().unwrap_or(false)
+    }
+
+    fn a_was_pressed(&self) -> bool {
+        BUTTON_A_SIGNAL.try_take().unwrap_or(false)
+    }
+
+    fn b_was_pressed(&self) -> bool {
+        BUTTON_B_SIGNAL.try_take().unwrap_or(false)
     }
 }
