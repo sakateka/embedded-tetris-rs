@@ -19,7 +19,6 @@ pub struct LifeGame<'a, D, C, T> {
     generation: u32,
     paused: bool,
     pattern_index: usize,
-    patterns: &'static [Option<&'static [(i8, i8)]>],
 }
 
 impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
@@ -34,7 +33,6 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
             generation: 0,
             paused: false,
             pattern_index: 0,
-            patterns: PATTERNS,
         };
 
         game.set_pattern();
@@ -45,7 +43,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
         self.screen.clear();
         self.generation = 0;
 
-        let current_pattern = self.patterns[self.pattern_index];
+        let current_pattern = PATTERNS[self.pattern_index];
         if let Some(pattern) = current_pattern {
             // Predefined pattern
             info!("Setting predefined pattern {}", self.pattern_index);
@@ -70,7 +68,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
     }
 
     fn next_pattern(&mut self) {
-        self.pattern_index = (self.pattern_index + 1) % self.patterns.len();
+        self.pattern_index = (self.pattern_index + 1) % PATTERNS.len();
         debug!("Switching to pattern {}", self.pattern_index);
         self.set_pattern();
     }
@@ -156,28 +154,35 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
     }
 
     fn draw_ui(&mut self) {
-        // Display pattern number (0-5)
-        let pattern_digit = self.pattern_index % 10;
-        self.screen
-            .draw_figure(0, 0, &DIGITS[pattern_digit], GREEN_IDX);
-
-        // Show generation indicator (simplified)
-        let gen_indicator = ((self.generation / 10) % 10) as usize; // Show progress as single digit
-        self.screen
-            .draw_figure(4, 0, &DIGITS[gen_indicator], GREEN_IDX);
-
-        // Draw horizontal line
+        // Clear score area
         for x in 0..SCREEN_WIDTH {
-            self.screen.set(x, 5, PINK_IDX);
+            for y in 0..5 {
+                self.screen.set(x, y, BLACK_IDX);
+            }
         }
 
         // Show pause indicator
         if self.paused {
             // Draw pause symbol (two vertical lines)
             for y in 1..=3 {
-                self.screen.set(6, y, YELLOW_IDX);
-                self.screen.set(7, y, YELLOW_IDX);
+                self.screen.set(2, y, YELLOW_IDX);
+                self.screen.set(4, y, YELLOW_IDX);
             }
+        } else {
+            // Display pattern number (0-5)
+            let pattern_digit = self.pattern_index % 10;
+            self.screen
+                .draw_figure(0, 0, &DIGITS[pattern_digit], GREEN_IDX);
+
+            // Show generation indicator (simplified)
+            let gen_indicator = ((self.generation / 10) % 10) as usize; // Show progress as single digit
+            self.screen
+                .draw_figure(4, 0, &DIGITS[gen_indicator], GREEN_IDX);
+        }
+
+        // Draw horizontal line
+        for x in 0..SCREEN_WIDTH {
+            self.screen.set(x, 5, PINK_IDX);
         }
     }
 }
