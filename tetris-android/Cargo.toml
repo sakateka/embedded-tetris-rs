@@ -1,0 +1,21 @@
+[package]
+name = "tetris-android"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tetris-lib = { path = "../tetris-lib" }
+smart-leds = "0.4"
+android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.15.0"
+log = "0.4"
+pollster = "0.4.0"
+ndk = "0.9"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
