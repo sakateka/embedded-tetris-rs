@@ -42,4 +42,6 @@ macro_rules! error {
 
 // Re-export the macros for convenience when no logging is enabled
 #[cfg(not(any(feature = "defmt-log", feature = "std-log")))]
-pub use {debug, error, info, trace, warn};
+pub use {debug, error, info, trace};
+
+// Note: warn is not re-exported due to name conflict with built-in attribute

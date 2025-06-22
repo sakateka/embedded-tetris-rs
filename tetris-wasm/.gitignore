@@ -1,0 +1,14 @@
+# Generated WASM files
+/pkg/
+*.wasm
+*.js
+*.ts
+*.d.ts
+
+# Build artifacts
+/target/
+Cargo.lock
+
+# Temporary files  
+*.tmp
+*.temp 

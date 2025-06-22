@@ -1,0 +1,28 @@
+[package]
+name = "tetris-wasm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tetris-lib = { path = "../tetris-lib" }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+  "console",
+  "Window",
+  "Document",
+  "Element",
+  "HtmlElement",
+  "HtmlCanvasElement",
+  "CanvasRenderingContext2d",
+  "ImageData",
+  "KeyboardEvent",
+  "EventTarget",
+] }
+getrandom = { version = "0.2", features = ["js"] }
+console_error_panic_hook = "0.1"
+smart-leds = "0.4.0" 

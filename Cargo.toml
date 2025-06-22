@@ -2,5 +2,6 @@
 members = [
     "tetris-lib",
     "tetris-console",
+    "tetris-wasm",
 ]
 resolver = "2"
