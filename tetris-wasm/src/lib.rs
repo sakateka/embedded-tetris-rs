@@ -1,4 +1,5 @@
 use smart_leds::RGB8;
+use std::sync::atomic::{AtomicBool, AtomicI8, Ordering};
 use tetris_lib::{
     common::{GameController, LedDisplay, Timer, SCREEN_HEIGHT, SCREEN_WIDTH},
     games::run_game_menu,
@@ -130,29 +131,29 @@ impl LedDisplay for WasmDisplay {
     }
 }
 
-// Global input state to avoid aliasing issues
-static mut INPUT_STATE: InputState = InputState {
-    x_input: 0,
-    y_input: 0,
-    joystick_pressed: false,
-    a_pressed: false,
-    b_pressed: false,
-    prev_joystick_pressed: false,
-    prev_a_pressed: false,
-    prev_b_pressed: false,
-};
-
+// Global input state using a struct with atomic fields
 #[derive(Default)]
 struct InputState {
-    x_input: i8,
-    y_input: i8,
-    joystick_pressed: bool,
-    a_pressed: bool,
-    b_pressed: bool,
-    prev_joystick_pressed: bool,
-    prev_a_pressed: bool,
-    prev_b_pressed: bool,
+    x_input: AtomicI8,
+    y_input: AtomicI8,
+    joystick_pressed: AtomicBool,
+    a_pressed: AtomicBool,
+    b_pressed: AtomicBool,
+    prev_joystick_pressed: AtomicBool,
+    prev_a_pressed: AtomicBool,
+    prev_b_pressed: AtomicBool,
 }
+
+static INPUT_STATE: InputState = InputState {
+    x_input: AtomicI8::new(0),
+    y_input: AtomicI8::new(0),
+    joystick_pressed: AtomicBool::new(false),
+    a_pressed: AtomicBool::new(false),
+    b_pressed: AtomicBool::new(false),
+    prev_joystick_pressed: AtomicBool::new(false),
+    prev_a_pressed: AtomicBool::new(false),
+    prev_b_pressed: AtomicBool::new(false),
+};
 
 // Controller implementation for WASM
 pub struct WasmController;
@@ -163,30 +164,30 @@ impl WasmController {
     }
 
     pub fn handle_key_down(event: &KeyboardEvent) {
-        unsafe {
-            match event.key().as_str() {
-                "ArrowLeft" | "a" | "A" => INPUT_STATE.x_input = -1,
-                "ArrowRight" | "d" | "D" => INPUT_STATE.x_input = 1,
-                "ArrowUp" | "w" | "W" => INPUT_STATE.y_input = -1,
-                "ArrowDown" | "s" | "S" => INPUT_STATE.y_input = 1,
-                "Enter" | " " => INPUT_STATE.joystick_pressed = true,
-                "q" | "Q" => INPUT_STATE.a_pressed = true,
-                "e" | "E" => INPUT_STATE.b_pressed = true,
-                _ => {}
-            }
+        match event.key().as_str() {
+            "ArrowLeft" | "a" | "A" => INPUT_STATE.x_input.store(-1, Ordering::Relaxed),
+            "ArrowRight" | "d" | "D" => INPUT_STATE.x_input.store(1, Ordering::Relaxed),
+            "ArrowUp" | "w" | "W" => INPUT_STATE.y_input.store(-1, Ordering::Relaxed),
+            "ArrowDown" | "s" | "S" => INPUT_STATE.y_input.store(1, Ordering::Relaxed),
+            "Enter" | " " => INPUT_STATE.joystick_pressed.store(true, Ordering::Relaxed),
+            "q" | "Q" => INPUT_STATE.a_pressed.store(true, Ordering::Relaxed),
+            "e" | "E" => INPUT_STATE.b_pressed.store(true, Ordering::Relaxed),
+            _ => {}
         }
     }
 
     pub fn handle_key_up(event: &KeyboardEvent) {
-        unsafe {
-            match event.key().as_str() {
-                "ArrowLeft" | "ArrowRight" | "a" | "A" | "d" | "D" => INPUT_STATE.x_input = 0,
-                "ArrowUp" | "ArrowDown" | "w" | "W" | "s" | "S" => INPUT_STATE.y_input = 0,
-                "Enter" | " " => INPUT_STATE.joystick_pressed = false,
-                "q" | "Q" => INPUT_STATE.a_pressed = false,
-                "e" | "E" => INPUT_STATE.b_pressed = false,
-                _ => {}
+        match event.key().as_str() {
+            "ArrowLeft" | "ArrowRight" | "a" | "A" | "d" | "D" => {
+                INPUT_STATE.x_input.store(0, Ordering::Relaxed)
             }
+            "ArrowUp" | "ArrowDown" | "w" | "W" | "s" | "S" => {
+                INPUT_STATE.y_input.store(0, Ordering::Relaxed)
+            }
+            "Enter" | " " => INPUT_STATE.joystick_pressed.store(false, Ordering::Relaxed),
+            "q" | "Q" => INPUT_STATE.a_pressed.store(false, Ordering::Relaxed),
+            "e" | "E" => INPUT_STATE.b_pressed.store(false, Ordering::Relaxed),
+            _ => {}
         }
     }
 }
@@ -199,38 +200,31 @@ impl Default for WasmController {
 
 impl GameController for WasmController {
     async fn read_x(&mut self) -> i8 {
-        unsafe { INPUT_STATE.x_input }
+        INPUT_STATE.x_input.load(Ordering::Relaxed)
     }
 
     async fn read_y(&mut self) -> i8 {
-        unsafe { INPUT_STATE.y_input }
+        INPUT_STATE.y_input.load(Ordering::Relaxed)
     }
 
     fn joystick_was_pressed(&self) -> bool {
-        unsafe {
-            let pressed = INPUT_STATE.joystick_pressed && !INPUT_STATE.prev_joystick_pressed;
-            // Update previous state for next check
-            INPUT_STATE.prev_joystick_pressed = INPUT_STATE.joystick_pressed;
-            pressed
-        }
+        let current = INPUT_STATE.joystick_pressed.load(Ordering::Relaxed);
+        let prev = INPUT_STATE
+            .prev_joystick_pressed
+            .swap(current, Ordering::Relaxed);
+        current && !prev
     }
 
     fn a_was_pressed(&self) -> bool {
-        unsafe {
-            let pressed = INPUT_STATE.a_pressed && !INPUT_STATE.prev_a_pressed;
-            // Update previous state for next check
-            INPUT_STATE.prev_a_pressed = INPUT_STATE.a_pressed;
-            pressed
-        }
+        let current = INPUT_STATE.a_pressed.load(Ordering::Relaxed);
+        let prev = INPUT_STATE.prev_a_pressed.swap(current, Ordering::Relaxed);
+        current && !prev
     }
 
     fn b_was_pressed(&self) -> bool {
-        unsafe {
-            let pressed = INPUT_STATE.b_pressed && !INPUT_STATE.prev_b_pressed;
-            // Update previous state for next check
-            INPUT_STATE.prev_b_pressed = INPUT_STATE.b_pressed;
-            pressed
-        }
+        let current = INPUT_STATE.b_pressed.load(Ordering::Relaxed);
+        let prev = INPUT_STATE.prev_b_pressed.swap(current, Ordering::Relaxed);
+        current && !prev
     }
 }
 
