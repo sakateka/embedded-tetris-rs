@@ -191,6 +191,12 @@ impl WasmController {
     }
 }
 
+impl Default for WasmController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GameController for WasmController {
     async fn read_x(&mut self) -> i8 {
         unsafe { INPUT_STATE.x_input }
