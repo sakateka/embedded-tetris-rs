@@ -37,6 +37,42 @@ static INPUT_STATE: InputState = InputState {
     prev_b_pressed: AtomicBool::new(false),
 };
 
+// PNG button icons (placeholder data - replace with actual PNG bytes)
+// These are minimal 32x32 PNG images for each button
+const LEFT_ARROW_PNG: &[u8] = include_bytes!("../assets/left_arrow.png");
+const RIGHT_ARROW_PNG: &[u8] = include_bytes!("../assets/right_arrow.png");
+const UP_ARROW_PNG: &[u8] = include_bytes!("../assets/up_arrow.png");
+const DOWN_ARROW_PNG: &[u8] = include_bytes!("../assets/down_arrow.png");
+const A_BUTTON_PNG: &[u8] = include_bytes!("../assets/a_button.png");
+const B_BUTTON_PNG: &[u8] = include_bytes!("../assets/b_button.png");
+const ENTER_BUTTON_PNG: &[u8] = include_bytes!("../assets/enter_button.png");
+
+// Structure to hold decoded PNG data
+struct ButtonIcon {
+    width: u32,
+    height: u32,
+    pixels: Vec<[u8; 4]>, // RGBA pixels
+}
+
+impl ButtonIcon {
+    fn from_png_bytes(png_data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let img = image::load_from_memory(png_data)?;
+        let rgba_img = img.to_rgba8();
+        let (width, height) = rgba_img.dimensions();
+
+        let pixels: Vec<[u8; 4]> = rgba_img
+            .pixels()
+            .map(|p| [p[0], p[1], p[2], p[3]])
+            .collect();
+
+        Ok(ButtonIcon {
+            width,
+            height,
+            pixels,
+        })
+    }
+}
+
 // Timer implementation for Android
 pub struct AndroidTimer;
 
@@ -66,27 +102,94 @@ impl AndroidDisplay {
     ) {
         let controls_y_start = window_height - controls_height;
 
-        // Define button layout: [Left] [Down] [Up] [Right]  [A] [B]
-        let button_width = window_width / 6;
-        let button_height = controls_height / 2;
-        let button_y = controls_y_start + (controls_height - button_height) / 2;
+        // SIMPLIFIED: Side buttons in fixed, safe positions for testing
+        let side_button_width = 160; // Twice bigger
+        let side_button_height = 160; // Twice bigger
 
-        let buttons = [
-            (0 * button_width, "←"), // Left
-            (1 * button_width, "↓"), // Down
-            (2 * button_width, "↑"), // Up
-            (3 * button_width, "→"), // Right
-            (4 * button_width, "A"), // A button
-            (5 * button_width, "B"), // B button
-        ];
+        // Put them at the bottom but still on the sides
+        let left_button_x = 10;
+        let right_button_x = window_width - side_button_width - 10;
+        let button_start_y = controls_y_start - (3 * side_button_height + 2 * 20); // Position so all 3 buttons fit above controls area
+        let button_gap = 20; // Bigger gap too
 
-        // Draw each button
-        for (x, _label) in buttons {
-            self.draw_button(pixels, x, button_y, button_width, button_height, stride);
-        }
+        // Left side buttons: Left, Up, A (3 buttons vertically)
+        self.draw_button_with_text(
+            pixels,
+            left_button_x,
+            button_start_y,
+            side_button_width,
+            side_button_height,
+            stride,
+            "←",
+        );
+        self.draw_button_with_text(
+            pixels,
+            left_button_x,
+            button_start_y + side_button_height + button_gap,
+            side_button_width,
+            side_button_height,
+            stride,
+            "↑",
+        );
+        self.draw_button_with_text(
+            pixels,
+            left_button_x,
+            button_start_y + 2 * (side_button_height + button_gap),
+            side_button_width,
+            side_button_height,
+            stride,
+            "A",
+        );
+
+        // Right side buttons: Right, Down, B (3 buttons vertically)
+        self.draw_button_with_text(
+            pixels,
+            right_button_x,
+            button_start_y,
+            side_button_width,
+            side_button_height,
+            stride,
+            "→",
+        );
+        self.draw_button_with_text(
+            pixels,
+            right_button_x,
+            button_start_y + side_button_height + button_gap,
+            side_button_width,
+            side_button_height,
+            stride,
+            "↓",
+        );
+        self.draw_button_with_text(
+            pixels,
+            right_button_x,
+            button_start_y + 2 * (side_button_height + button_gap),
+            side_button_width,
+            side_button_height,
+            stride,
+            "B",
+        );
+
+        // No more center buttons - all moved to sides
+
+        // Big Enter button at the bottom (now can be bigger since no center buttons)
+        let big_button_width = window_width * 2 / 3; // Bigger since no center buttons
+        let big_button_height = controls_height; // Twice as high - full controls area height
+        let big_button_x = (window_width - big_button_width) / 2; // Center horizontally
+        let big_button_y = controls_y_start; // Start at bottom of screen
+
+        self.draw_button_with_text(
+            pixels,
+            big_button_x,
+            big_button_y,
+            big_button_width,
+            big_button_height,
+            stride,
+            "⏎",
+        );
     }
 
-    fn draw_button(
+    fn draw_button_with_text(
         &self,
         pixels: &mut [std::mem::MaybeUninit<u8>],
         x: usize,
@@ -94,11 +197,13 @@ impl AndroidDisplay {
         width: usize,
         height: usize,
         stride: usize,
+        label: &str,
     ) {
-        // Draw button border in white (R5G6B5: all bits set)
-        let border_color = 0xFFFFu16.to_le_bytes();
-        let fill_color = 0x8410u16.to_le_bytes(); // Dark gray
+        // Colors in R5G6B5 format
+        let border_color = 0xFFFFu16.to_le_bytes(); // White
+        let fill_color = 0x2104u16.to_le_bytes(); // Dark gray
 
+        // Draw button background and border
         for py in 0..height {
             for px in 0..width {
                 let screen_x = x + px;
@@ -113,6 +218,114 @@ impl AndroidDisplay {
                     pixels[pixel_offset].write(color[0]);
                     pixels[pixel_offset + 1].write(color[1]);
                 }
+            }
+        }
+
+        // Draw text/icon in the center of the button
+        let icon_size = 80; // Bigger icons for better visibility (was 20)
+        let icon_x = x + (width - icon_size) / 2;
+        let icon_y = y + (height - icon_size) / 2;
+
+        // Draw PNG icons only
+        match label {
+            "←" => {
+                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, LEFT_ARROW_PNG);
+            }
+            "→" => {
+                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, RIGHT_ARROW_PNG);
+            }
+            "↑" => {
+                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, UP_ARROW_PNG);
+            }
+            "↓" => {
+                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, DOWN_ARROW_PNG);
+            }
+            "A" => {
+                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, A_BUTTON_PNG);
+            }
+            "B" => {
+                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, B_BUTTON_PNG);
+            }
+            "⏎" => {
+                // Even smaller enter icon (was width/3, now width/4)
+                let enter_icon_size = width / 4;
+                let enter_x = x + (width - enter_icon_size) / 2;
+                let enter_y = y + (height - enter_icon_size) / 2;
+                self.draw_png_icon(
+                    pixels,
+                    enter_x,
+                    enter_y,
+                    enter_icon_size,
+                    stride,
+                    ENTER_BUTTON_PNG,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn draw_png_icon(
+        &self,
+        pixels: &mut [std::mem::MaybeUninit<u8>],
+        x: usize,
+        y: usize,
+        size: usize,
+        stride: usize,
+        png_data: &[u8],
+    ) {
+        // Try to load and draw PNG icon
+        match ButtonIcon::from_png_bytes(png_data) {
+            Ok(icon) => {
+                let scale_x = size as f32 / icon.width as f32;
+                let scale_y = size as f32 / icon.height as f32;
+                let scale = scale_x.min(scale_y); // Maintain aspect ratio
+
+                let scaled_width = (icon.width as f32 * scale) as usize;
+                let scaled_height = (icon.height as f32 * scale) as usize;
+
+                // Center the scaled icon
+                let offset_x = (size - scaled_width) / 2;
+                let offset_y = (size - scaled_height) / 2;
+
+                for py in 0..scaled_height {
+                    for px in 0..scaled_width {
+                        // Calculate source pixel (with scaling)
+                        let src_x = (px as f32 / scale) as usize;
+                        let src_y = (py as f32 / scale) as usize;
+
+                        if src_x < icon.width as usize && src_y < icon.height as usize {
+                            let src_idx = src_y * icon.width as usize + src_x;
+                            if src_idx < icon.pixels.len() {
+                                let [r, g, b, a] = icon.pixels[src_idx];
+
+                                // Skip transparent pixels
+                                if a < 128 {
+                                    continue;
+                                }
+
+                                // Convert RGBA to R5G6B5
+                                let r5 = (r as u16 >> 3) & 0x1F; // 5 bits
+                                let g6 = (g as u16 >> 2) & 0x3F; // 6 bits
+                                let b5 = (b as u16 >> 3) & 0x1F; // 5 bits
+                                let rgb565 = (r5 << 11) | (g6 << 5) | b5;
+                                let color_bytes = rgb565.to_le_bytes();
+
+                                // Draw pixel to screen
+                                let screen_x = x + offset_x + px;
+                                let screen_y = y + offset_y + py;
+                                let pixel_offset = (screen_y * stride + screen_x) * 2;
+
+                                if pixel_offset + 1 < pixels.len() {
+                                    pixels[pixel_offset].write(color_bytes[0]);
+                                    pixels[pixel_offset + 1].write(color_bytes[1]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to load PNG icon: {:?}", e);
             }
         }
     }
@@ -131,22 +344,23 @@ impl AndroidDisplay {
                     let window_width = buffer.width() as usize;
                     let window_height = buffer.height() as usize;
                     let stride = buffer.stride() as usize;
-                    let format = buffer.format();
 
-                    info!(
-                        "📱 Window: {}x{}, stride: {}, format: {:?}",
-                        window_width, window_height, stride, format
-                    );
+                    // let format = buffer.format();
+                    // info!(
+                    //     "📱 Window: {}x{}, stride: {}, format: {:?}",
+                    //     window_width, window_height, stride, format
+                    // );
 
                     // Calculate scaling to fit the 8x32 display in the window
                     let scale_x = window_width / SCREEN_WIDTH;
                     let scale_y = window_height / SCREEN_HEIGHT;
-                    let scale = scale_x.min(scale_y).max(1).min(20); // Limit scale to prevent huge pixels
+                    let base_scale = scale_x.min(scale_y).max(1);
+                    let scale = (((base_scale * 3) as f64 * 0.97) as usize).min(60); // 3x larger, max 60x
 
                     // Center the display in the upper portion, leaving space for controls
                     let display_width = SCREEN_WIDTH * scale;
                     let display_height = SCREEN_HEIGHT * scale;
-                    let controls_height = 200; // Reserve space for touch controls
+                    let controls_height = 150; // Smaller controls area to give more space to game
                     let game_area_height = window_height.saturating_sub(controls_height);
 
                     let offset_x = (window_width - display_width) / 2;
@@ -158,10 +372,19 @@ impl AndroidDisplay {
                         return;
                     };
 
-                    // Clear the screen to black
-                    for pixel in pixels.iter_mut() {
-                        pixel.write(0);
+                    // Clear the entire screen to medium gray first
+                    // Medium gray in R5G6B5: R=16, G=32, B=16 (roughly 50% gray)
+                    let gray_r5g6b5: u16 = (16 << 11) | (32 << 5) | 16;
+                    let gray_bytes = gray_r5g6b5.to_le_bytes();
+
+                    for i in (0..pixels.len()).step_by(2) {
+                        if i + 1 < pixels.len() {
+                            pixels[i].write(gray_bytes[0]); // Low byte
+                            pixels[i + 1].write(gray_bytes[1]); // High byte
+                        }
                     }
+
+                    // No need to fill game area separately - black pixels will be converted to dark gray automatically
 
                     // Draw each LED pixel as a scaled block
                     for led_y in 0..SCREEN_HEIGHT {
@@ -174,11 +397,20 @@ impl AndroidDisplay {
 
                             let led = leds[led_idx];
 
+                            // Check if this is a black pixel (background) and convert to dark gray
+                            let (r, g, b) = if led.r == 0 && led.g == 0 && led.b == 0 {
+                                // Convert black pixels to dark gray (equal RGB values for true gray)
+                                (12u8, 12u8, 12u8) // Dark gray RGB values - all equal for neutral gray
+                            } else {
+                                // Keep original color for non-black pixels
+                                (led.r, led.g, led.b)
+                            };
+
                             // For R5G6B5 format: 5 bits red, 6 bits green, 5 bits blue
                             // Scale LED color from 0-31 to appropriate bit ranges
-                            let r5 = (led.r as u16).min(31); // 5 bits: 0-31
-                            let g6 = (led.g as u16 * 63 / 31).min(63); // 6 bits: 0-63
-                            let b5 = (led.b as u16).min(31); // 5 bits: 0-31
+                            let r5 = (r as u16).min(31); // 5 bits: 0-31
+                            let g6 = (g as u16 * 63 / 31).min(63); // 6 bits: 0-63
+                            let b5 = (b as u16).min(31); // 5 bits: 0-31
 
                             // Pack into 16-bit R5G6B5 format: RRRRRGGGGGGBBBBB
                             let rgb565 = (r5 << 11) | (g6 << 5) | b5;
@@ -215,12 +447,12 @@ impl AndroidDisplay {
                     // Unlock buffer to present to screen
                     drop(buffer);
 
-                    if active_pixels > 0 {
-                        info!(
-                            "📺 Rendered {} pixels to {}x{} window (scale: {}x)",
-                            active_pixels, window_width, window_height, scale
-                        );
-                    }
+                    // if active_pixels > 0 {
+                    //     info!(
+                    //         "📺 Rendered {} pixels to {}x{} window (scale: {}x)",
+                    //         active_pixels, window_width, window_height, scale
+                    //     );
+                    // }
                 }
                 Err(e) => {
                     if active_pixels > 0 {
@@ -228,12 +460,12 @@ impl AndroidDisplay {
                     }
                 }
             }
-        } else if active_pixels > 0 {
-            // Only warn when we actually have something to display
-            log::warn!(
-                "⚠️  Native window not available yet (active pixels: {})",
-                active_pixels
-            );
+            // } else if active_pixels > 0 {
+            //     // Only warn when we actually have something to display
+            //     log::warn!(
+            //         "⚠️  Native window not available yet (active pixels: {})",
+            //         active_pixels
+            //     );
         }
     }
 }
@@ -265,37 +497,89 @@ impl AndroidController {
         if let Some(native_window) = self.app.native_window() {
             let window_width = native_window.width() as usize;
             let window_height = native_window.height() as usize;
-            let controls_height = 200;
+            let controls_height = 150;
             let controls_y_start = window_height - controls_height;
 
-            // Check if touch is in controls area
-            if y >= controls_y_start {
-                let button_width = window_width / 6;
-                let button_height = controls_height / 2;
-                let button_y = controls_y_start + (controls_height - button_height) / 2;
+            // Clear previous inputs first
+            INPUT_STATE.x_input.store(0, Ordering::Relaxed);
+            INPUT_STATE.y_input.store(0, Ordering::Relaxed);
+            INPUT_STATE.joystick_pressed.store(false, Ordering::Relaxed);
+            INPUT_STATE.a_pressed.store(false, Ordering::Relaxed);
+            INPUT_STATE.b_pressed.store(false, Ordering::Relaxed);
 
-                // Check if touch is within button height range
-                if y >= button_y && y < button_y + button_height {
-                    let button_index = x / button_width;
+            // SIMPLIFIED: Check side buttons using same simple positions as drawing
+            let side_button_width = 160; // Twice bigger
+            let side_button_height = 160; // Twice bigger
+            let left_button_x = 10;
+            let right_button_x = window_width - side_button_width - 10;
+            let button_start_y = controls_y_start - (3 * side_button_height + 2 * 20); // Position so all 3 buttons fit above controls area
 
-                    // Clear previous inputs first
-                    INPUT_STATE.x_input.store(0, Ordering::Relaxed);
-                    INPUT_STATE.y_input.store(0, Ordering::Relaxed);
-                    INPUT_STATE.joystick_pressed.store(false, Ordering::Relaxed);
-                    INPUT_STATE.a_pressed.store(false, Ordering::Relaxed);
-                    INPUT_STATE.b_pressed.store(false, Ordering::Relaxed);
+            let button_gap = 20; // Bigger gap to match drawing
 
-                    // Set the appropriate input based on button
-                    match button_index {
-                        0 => INPUT_STATE.x_input.store(-1, Ordering::Relaxed), // Left
-                        1 => INPUT_STATE.y_input.store(1, Ordering::Relaxed),  // Down
-                        2 => INPUT_STATE.y_input.store(-1, Ordering::Relaxed), // Up
-                        3 => INPUT_STATE.x_input.store(1, Ordering::Relaxed),  // Right
-                        4 => INPUT_STATE.a_pressed.store(true, Ordering::Relaxed), // A
-                        5 => INPUT_STATE.b_pressed.store(true, Ordering::Relaxed), // B
-                        _ => {}
-                    }
-                }
+            // Left side buttons: Left, Up, A (3 buttons vertically)
+            // Left button
+            if x >= left_button_x
+                && x < left_button_x + side_button_width
+                && y >= button_start_y
+                && y < button_start_y + side_button_height
+            {
+                INPUT_STATE.x_input.store(-1, Ordering::Relaxed); // Left
+            }
+            // Up button
+            if x >= left_button_x
+                && x < left_button_x + side_button_width
+                && y >= button_start_y + side_button_height + button_gap
+                && y < button_start_y + side_button_height + button_gap + side_button_height
+            {
+                INPUT_STATE.y_input.store(-1, Ordering::Relaxed); // Up
+            }
+            // A button
+            if x >= left_button_x
+                && x < left_button_x + side_button_width
+                && y >= button_start_y + 2 * (side_button_height + button_gap)
+                && y < button_start_y + 2 * (side_button_height + button_gap) + side_button_height
+            {
+                INPUT_STATE.a_pressed.store(true, Ordering::Relaxed); // A
+            }
+
+            // Right side buttons: Right, Down, B (3 buttons vertically)
+            // Right button
+            if x >= right_button_x
+                && x < right_button_x + side_button_width
+                && y >= button_start_y
+                && y < button_start_y + side_button_height
+            {
+                INPUT_STATE.x_input.store(1, Ordering::Relaxed); // Right
+            }
+            // Down button
+            if x >= right_button_x
+                && x < right_button_x + side_button_width
+                && y >= button_start_y + side_button_height + button_gap
+                && y < button_start_y + side_button_height + button_gap + side_button_height
+            {
+                INPUT_STATE.y_input.store(1, Ordering::Relaxed); // Down
+            }
+            // B button
+            if x >= right_button_x
+                && x < right_button_x + side_button_width
+                && y >= button_start_y + 2 * (side_button_height + button_gap)
+                && y < button_start_y + 2 * (side_button_height + button_gap) + side_button_height
+            {
+                INPUT_STATE.b_pressed.store(true, Ordering::Relaxed); // B
+            }
+
+            // Check big ENTER button (updated to match new drawing size)
+            let big_button_width = window_width * 2 / 3; // Bigger since no center buttons
+            let big_button_height = controls_height; // Twice as high - full controls area height
+            let big_button_x = (window_width - big_button_width) / 2; // Center horizontally
+            let big_button_y = controls_y_start; // Start at bottom of screen
+
+            if x >= big_button_x
+                && x < big_button_x + big_button_width
+                && y >= big_button_y
+                && y < big_button_y + big_button_height
+            {
+                INPUT_STATE.joystick_pressed.store(true, Ordering::Relaxed);
             }
         }
     }
