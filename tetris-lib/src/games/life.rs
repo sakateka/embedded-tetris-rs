@@ -134,7 +134,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
         }
 
         // Apply Conway's rules to game area
-        let mut alive_count = 0;
+        let mut _alive_count = 0;
         for x in 0..SCREEN_WIDTH {
             for y in 6..SCREEN_HEIGHT {
                 let neighbors = self.count_neighbors(x, y);
@@ -148,7 +148,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
                 // 3. All other cells die or stay dead
                 if stays_alive || reborns {
                     self.next_screen.set(x, y, GREEN_IDX);
-                    alive_count += 1;
+                    _alive_count += 1;
                 } // else: cell dies or stays dead (already cleared)
             }
         }
@@ -160,7 +160,7 @@ impl<'a, D: LedDisplay, C: GameController, T: Timer> LifeGame<'a, D, C, T> {
         if self.generation % 50 == 0 {
             debug!(
                 "Generation {}, alive cells: {}",
-                self.generation, alive_count
+                self.generation, _alive_count
             );
         }
     }
