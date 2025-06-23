@@ -1,9 +1,13 @@
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use android_logger::Config;
+use fontdue::{
+    layout::{CoordinateSystem, Layout, LayoutSettings, TextStyle},
+    Font, FontSettings,
+};
 use log::info;
 use smart_leds::RGB8;
 
-use std::sync::atomic::{AtomicBool, AtomicI8, Ordering};
+use std::sync::{atomic::{AtomicBool, AtomicI8, Ordering}, Mutex};
 use std::time::Duration;
 use tetris_lib::{
     common::{GameController, LedDisplay, Timer, SCREEN_HEIGHT, SCREEN_WIDTH},
@@ -11,8 +15,70 @@ use tetris_lib::{
 };
 
 // Global state for the game display and input
-static mut LEDS: [RGB8; 256] = [RGB8::new(0, 0, 0); 256];
+static LEDS: Mutex<[RGB8; 256]> = Mutex::new([RGB8::new(0, 0, 0); 256]);
 static SHOULD_UPDATE_DISPLAY: AtomicBool = AtomicBool::new(false);
+
+// Gesture detection state
+#[derive(Debug, Clone, Copy)]
+struct TouchPoint {
+    x: f32,
+    y: f32,
+    timestamp: std::time::Instant,
+}
+
+impl Default for TouchPoint {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            timestamp: std::time::Instant::now(),
+        }
+    }
+}
+
+struct GestureState {
+    touch_start: std::sync::RwLock<Option<TouchPoint>>,
+    last_touch: std::sync::RwLock<Option<TouchPoint>>,
+    last_tap: std::sync::RwLock<Option<TouchPoint>>, // Track last tap for double tap detection
+    gestures_enabled: AtomicBool,
+}
+
+impl Default for GestureState {
+    fn default() -> Self {
+        Self {
+            touch_start: std::sync::RwLock::new(None),
+            last_touch: std::sync::RwLock::new(None),
+            last_tap: std::sync::RwLock::new(None), // Initialize last tap tracking
+            gestures_enabled: AtomicBool::new(true),
+        }
+    }
+}
+
+static GESTURE_STATE: GestureState = GestureState {
+    touch_start: std::sync::RwLock::new(None),
+    last_touch: std::sync::RwLock::new(None),
+    last_tap: std::sync::RwLock::new(None), // Initialize last tap tracking in static
+    gestures_enabled: AtomicBool::new(true),
+};
+
+// Gesture detection constants
+const MIN_SWIPE_DISTANCE: f32 = 100.0; // Minimum distance for a swipe
+const MAX_SWIPE_TIME_MS: u64 = 500; // Maximum time for a swipe gesture
+const TAP_MAX_DISTANCE: f32 = 50.0; // Maximum movement for a tap
+const LONG_PRESS_TIME_MS: u64 = 500; // Time for long press detection
+const DOUBLE_TAP_MAX_TIME_MS: u64 = 300; // Maximum time between taps for double tap
+const DOUBLE_TAP_MAX_DISTANCE: f32 = 100.0; // Maximum distance between taps for double tap
+
+#[derive(Debug, Clone, Copy)]
+enum GestureType {
+    SwipeLeft,
+    SwipeRight,
+    SwipeUp,
+    SwipeDown,
+    Tap,
+    DoubleTap,
+    LongPress,
+}
 
 #[derive(Default)]
 struct InputState {
@@ -37,39 +103,125 @@ static INPUT_STATE: InputState = InputState {
     prev_b_pressed: AtomicBool::new(false),
 };
 
-// PNG button icons (placeholder data - replace with actual PNG bytes)
-// These are minimal 32x32 PNG images for each button
-const LEFT_ARROW_PNG: &[u8] = include_bytes!("../assets/left_arrow.png");
-const RIGHT_ARROW_PNG: &[u8] = include_bytes!("../assets/right_arrow.png");
-const UP_ARROW_PNG: &[u8] = include_bytes!("../assets/up_arrow.png");
-const DOWN_ARROW_PNG: &[u8] = include_bytes!("../assets/down_arrow.png");
-const A_BUTTON_PNG: &[u8] = include_bytes!("../assets/a_button.png");
-const B_BUTTON_PNG: &[u8] = include_bytes!("../assets/b_button.png");
-const ENTER_BUTTON_PNG: &[u8] = include_bytes!("../assets/enter_button.png");
+// No embedded fonts - using system fonts only
 
-// Structure to hold decoded PNG data
-struct ButtonIcon {
-    width: u32,
-    height: u32,
-    pixels: Vec<[u8; 4]>, // RGBA pixels
+// Structure to hold text renderer for ASCII characters
+struct TextRenderer {
+    font: Font,
+    layout: Layout,
 }
 
-impl ButtonIcon {
-    fn from_png_bytes(png_data: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        let img = image::load_from_memory(png_data)?;
-        let rgba_img = img.to_rgba8();
-        let (width, height) = rgba_img.dimensions();
+impl TextRenderer {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        // Try Android system fonts for ASCII characters (no emoji needed)
+        let font = if let Ok(system_font_data) = std::fs::read("/system/fonts/Roboto-Regular.ttf") {
+            Font::from_bytes(system_font_data, FontSettings::default())?
+        } else if let Ok(system_font_data) = std::fs::read("/system/fonts/DroidSans.ttf") {
+            Font::from_bytes(system_font_data, FontSettings::default())?
+        } else {
+            return Err("No suitable system font found for ASCII characters".into());
+        };
+        
+        let layout = Layout::new(CoordinateSystem::PositiveYDown);
+        Ok(Self { font, layout })
+    }
 
-        let pixels: Vec<[u8; 4]> = rgba_img
-            .pixels()
-            .map(|p| [p[0], p[1], p[2], p[3]])
-            .collect();
+    fn render_text_to_pixels(
+        &mut self,
+        text: &str,
+        size: f32,
+    ) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
+        self.layout.reset(&LayoutSettings {
+            max_width: Some(size),
+            max_height: Some(size),
+            ..LayoutSettings::default()
+        });
 
-        Ok(ButtonIcon {
-            width,
-            height,
-            pixels,
-        })
+        self.layout
+            .append(&[&self.font], &TextStyle::new(text, size, 0));
+
+        let glyphs = self.layout.glyphs();
+
+        if glyphs.is_empty() {
+            return Err("No glyphs found for text".into());
+        }
+
+        // Calculate bounds
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+
+        for glyph in glyphs {
+            let (metrics, _) = self.font.rasterize(glyph.parent, glyph.key.px);
+            min_x = min_x.min(glyph.x);
+            min_y = min_y.min(glyph.y);
+            max_x = max_x.max(glyph.x + metrics.width as f32);
+            max_y = max_y.max(glyph.y + metrics.height as f32);
+        }
+
+        let width = (max_x - min_x).ceil() as u32;
+        let height = (max_y - min_y).ceil() as u32;
+
+        // Create bitmap
+        let mut pixels = vec![0u8; (width * height) as usize];
+
+        for glyph in glyphs {
+            let (metrics, bitmap) = self.font.rasterize(glyph.parent, glyph.key.px);
+            let glyph_x = (glyph.x - min_x) as i32;
+            let glyph_y = (glyph.y - min_y) as i32;
+
+            for y in 0..metrics.height {
+                for x in 0..metrics.width {
+                    let src_idx = y * metrics.width + x;
+                    let dst_x = glyph_x + x as i32;
+                    let dst_y = glyph_y + y as i32;
+
+                    if dst_x >= 0 && dst_y >= 0 && dst_x < width as i32 && dst_y < height as i32 {
+                        let dst_idx = (dst_y as u32 * width + dst_x as u32) as usize;
+                        if src_idx < bitmap.len() && dst_idx < pixels.len() {
+                            pixels[dst_idx] = bitmap[src_idx];
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok((pixels, width, height))
+    }
+}
+
+// Global text renderer instance
+lazy_static::lazy_static! {
+    static ref TEXT_RENDERER: std::sync::Mutex<TextRenderer> = std::sync::Mutex::new(TextRenderer::new().unwrap());
+}
+
+// Helper structs to reduce function parameter counts
+#[derive(Debug, Clone, Copy)]
+struct ButtonRect {
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+}
+
+impl ButtonRect {
+    fn new(x: usize, y: usize, width: usize, height: usize) -> Self {
+        Self { x, y, width, height }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RenderContext {
+    x: usize,
+    y: usize,
+    max_size: usize,
+    stride: usize,
+}
+
+impl RenderContext {
+    fn new(x: usize, y: usize, max_size: usize, stride: usize) -> Self {
+        Self { x, y, max_size, stride }
     }
 }
 
@@ -102,100 +254,68 @@ impl AndroidDisplay {
     ) {
         let controls_y_start = window_height - controls_height;
 
-        // SIMPLIFIED: Side buttons in fixed, safe positions for testing
-        let side_button_width = 160; // Twice bigger
-        let side_button_height = 160; // Twice bigger
+        // Side buttons in fixed positions
+        let side_button_width = 160;
+        let side_button_height = 160;
 
-        // Put them at the bottom but still on the sides
+        // Position buttons higher to make room for enter and gesture buttons
         let left_button_x = 10;
         let right_button_x = window_width - side_button_width - 10;
-        let button_start_y = controls_y_start - (3 * side_button_height + 2 * 20); // Position so all 3 buttons fit above controls area
-        let button_gap = 20; // Bigger gap too
+        let button_start_y = controls_y_start - (4 * side_button_height + 3 * 20); // Position so all 4 buttons fit above controls area
+        let button_gap = 20;
 
-        // Left side buttons: Left, Up, A (3 buttons vertically)
+        // Left side buttons: Left, Up, A, Enter (4 buttons vertically)
         self.draw_button_with_text(
             pixels,
-            left_button_x,
-            button_start_y,
-            side_button_width,
-            side_button_height,
+            ButtonRect::new(left_button_x, button_start_y, side_button_width, side_button_height),
             stride,
             "←",
         );
         self.draw_button_with_text(
             pixels,
-            left_button_x,
-            button_start_y + side_button_height + button_gap,
-            side_button_width,
-            side_button_height,
+            ButtonRect::new(left_button_x, button_start_y + side_button_height + button_gap, side_button_width, side_button_height),
             stride,
             "↑",
         );
         self.draw_button_with_text(
             pixels,
-            left_button_x,
-            button_start_y + 2 * (side_button_height + button_gap),
-            side_button_width,
-            side_button_height,
+            ButtonRect::new(left_button_x, button_start_y + 2 * (side_button_height + button_gap), side_button_width, side_button_height),
             stride,
             "A",
         );
-
-        // Right side buttons: Right, Down, B (3 buttons vertically)
+        // Enter button on left side
         self.draw_button_with_text(
             pixels,
-            right_button_x,
-            button_start_y,
-            side_button_width,
-            side_button_height,
+            ButtonRect::new(left_button_x, button_start_y + 3 * (side_button_height + button_gap), side_button_width, side_button_height),
+            stride,
+            "⏎",
+        );
+
+        // Right side buttons: Right, Down, B, Gesture Toggle (4 buttons vertically)
+        self.draw_button_with_text(
+            pixels,
+            ButtonRect::new(right_button_x, button_start_y, side_button_width, side_button_height),
             stride,
             "→",
         );
         self.draw_button_with_text(
             pixels,
-            right_button_x,
-            button_start_y + side_button_height + button_gap,
-            side_button_width,
-            side_button_height,
+            ButtonRect::new(right_button_x, button_start_y + side_button_height + button_gap, side_button_width, side_button_height),
             stride,
             "↓",
         );
         self.draw_button_with_text(
             pixels,
-            right_button_x,
-            button_start_y + 2 * (side_button_height + button_gap),
-            side_button_width,
-            side_button_height,
+            ButtonRect::new(right_button_x, button_start_y + 2 * (side_button_height + button_gap), side_button_width, side_button_height),
             stride,
             "B",
-        );
-
-        // No more center buttons - all moved to sides
-
-        // Big Enter button at the bottom (now can be bigger since no center buttons)
-        let big_button_width = window_width * 2 / 3; // Bigger since no center buttons
-        let big_button_height = controls_height; // Twice as high - full controls area height
-        let big_button_x = (window_width - big_button_width) / 2; // Center horizontally
-        let big_button_y = controls_y_start; // Start at bottom of screen
-
-        self.draw_button_with_text(
-            pixels,
-            big_button_x,
-            big_button_y,
-            big_button_width,
-            big_button_height,
-            stride,
-            "⏎",
         );
     }
 
     fn draw_button_with_text(
         &self,
         pixels: &mut [std::mem::MaybeUninit<u8>],
-        x: usize,
-        y: usize,
-        width: usize,
-        height: usize,
+        rect: ButtonRect,
         stride: usize,
         label: &str,
     ) {
@@ -204,15 +324,15 @@ impl AndroidDisplay {
         let fill_color = 0x2104u16.to_le_bytes(); // Dark gray
 
         // Draw button background and border
-        for py in 0..height {
-            for px in 0..width {
-                let screen_x = x + px;
-                let screen_y = y + py;
+        for py in 0..rect.height {
+            for px in 0..rect.width {
+                let screen_x = rect.x + px;
+                let screen_y = rect.y + py;
                 let pixel_offset = (screen_y * stride + screen_x) * 2;
 
                 if pixel_offset + 1 < pixels.len() {
                     // Draw border (2-pixel wide)
-                    let is_border = px < 2 || px >= width - 2 || py < 2 || py >= height - 2;
+                    let is_border = px < 2 || px >= rect.width - 2 || py < 2 || py >= rect.height - 2;
                     let color = if is_border { border_color } else { fill_color };
 
                     pixels[pixel_offset].write(color[0]);
@@ -221,111 +341,89 @@ impl AndroidDisplay {
             }
         }
 
-        // Draw text/icon in the center of the button
-        let icon_size = 80; // Bigger icons for better visibility (was 20)
-        let icon_x = x + (width - icon_size) / 2;
-        let icon_y = y + (height - icon_size) / 2;
+        // Try to render emoji first, fallback to PNG if it fails
+        let icon_size = 80;
+        let icon_x = rect.x + (rect.width - icon_size) / 2;
+        let icon_y = rect.y + (rect.height - icon_size) / 2;
 
-        // Draw PNG icons only
-        match label {
-            "←" => {
-                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, LEFT_ARROW_PNG);
-            }
-            "→" => {
-                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, RIGHT_ARROW_PNG);
-            }
-            "↑" => {
-                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, UP_ARROW_PNG);
-            }
-            "↓" => {
-                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, DOWN_ARROW_PNG);
-            }
-            "A" => {
-                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, A_BUTTON_PNG);
-            }
-            "B" => {
-                self.draw_png_icon(pixels, icon_x, icon_y, icon_size, stride, B_BUTTON_PNG);
-            }
-            "⏎" => {
-                // Even smaller enter icon (was width/3, now width/4)
-                let enter_icon_size = width / 4;
-                let enter_x = x + (width - enter_icon_size) / 2;
-                let enter_y = y + (height - enter_icon_size) / 2;
-                self.draw_png_icon(
-                    pixels,
-                    enter_x,
-                    enter_y,
-                    enter_icon_size,
-                    stride,
-                    ENTER_BUTTON_PNG,
-                );
-            }
-            _ => {}
-        }
+        // Use simple ASCII characters that work reliably
+        let text = match label {
+            "←" => "<",
+            "→" => ">",
+            "↑" => "^", 
+            "↓" => "v",
+            "A" => "A",
+            "B" => "B",
+            "⏎" => "E", // E for Enter
+            _ => unreachable!(),
+        };
+
+        // Render ASCII text
+        let mut renderer = TEXT_RENDERER.lock().unwrap();
+        let (text_pixels, text_width, text_height) = renderer
+            .render_text_to_pixels(text, icon_size as f32)
+            .unwrap();
+
+        // Draw text pixels
+        let render_ctx = RenderContext::new(icon_x, icon_y, icon_size, stride);
+        self.draw_text_pixels(
+            pixels,
+            render_ctx,
+            &text_pixels,
+            text_width,
+            text_height,
+        );
     }
 
-    fn draw_png_icon(
+    fn draw_text_pixels(
         &self,
         pixels: &mut [std::mem::MaybeUninit<u8>],
-        x: usize,
-        y: usize,
-        size: usize,
-        stride: usize,
-        png_data: &[u8],
+        ctx: RenderContext,
+        text_pixels: &[u8],
+        text_width: u32,
+        text_height: u32,
     ) {
-        // Try to load and draw PNG icon
-        match ButtonIcon::from_png_bytes(png_data) {
-            Ok(icon) => {
-                let scale_x = size as f32 / icon.width as f32;
-                let scale_y = size as f32 / icon.height as f32;
-                let scale = scale_x.min(scale_y); // Maintain aspect ratio
+        let scale_x = ctx.max_size as f32 / text_width as f32;
+        let scale_y = ctx.max_size as f32 / text_height as f32;
+        let scale = scale_x.min(scale_y).min(1.0); // Don't upscale
 
-                let scaled_width = (icon.width as f32 * scale) as usize;
-                let scaled_height = (icon.height as f32 * scale) as usize;
+        let scaled_width = (text_width as f32 * scale) as usize;
+        let scaled_height = (text_height as f32 * scale) as usize;
 
-                // Center the scaled icon
-                let offset_x = (size - scaled_width) / 2;
-                let offset_y = (size - scaled_height) / 2;
+        let offset_x = (ctx.max_size - scaled_width) / 2;
+        let offset_y = (ctx.max_size - scaled_height) / 2;
 
-                for py in 0..scaled_height {
-                    for px in 0..scaled_width {
-                        // Calculate source pixel (with scaling)
-                        let src_x = (px as f32 / scale) as usize;
-                        let src_y = (py as f32 / scale) as usize;
+        for py in 0..scaled_height {
+            for px in 0..scaled_width {
+                let src_x = (px as f32 / scale) as usize;
+                let src_y = (py as f32 / scale) as usize;
 
-                        if src_x < icon.width as usize && src_y < icon.height as usize {
-                            let src_idx = src_y * icon.width as usize + src_x;
-                            if src_idx < icon.pixels.len() {
-                                let [r, g, b, a] = icon.pixels[src_idx];
+                if src_x < text_width as usize && src_y < text_height as usize {
+                    let src_idx = src_y * text_width as usize + src_x;
+                    if src_idx < text_pixels.len() {
+                        let alpha = text_pixels[src_idx];
 
-                                // Skip transparent pixels
-                                if a < 128 {
-                                    continue;
-                                }
+                        if alpha > 128 {
+                            // Only draw if not transparent
+                            // Convert grayscale to white in R5G6B5
+                            let intensity = alpha;
+                            let r5 = (intensity as u16 * 31 / 255) & 0x1F;
+                            let g6 = (intensity as u16 * 63 / 255) & 0x3F;
+                            let b5 = (intensity as u16 * 31 / 255) & 0x1F;
+                            let rgb565 = (r5 << 11) | (g6 << 5) | b5;
+                            let color_bytes = rgb565.to_le_bytes();
 
-                                // Convert RGBA to R5G6B5
-                                let r5 = (r as u16 >> 3) & 0x1F; // 5 bits
-                                let g6 = (g as u16 >> 2) & 0x3F; // 6 bits
-                                let b5 = (b as u16 >> 3) & 0x1F; // 5 bits
-                                let rgb565 = (r5 << 11) | (g6 << 5) | b5;
-                                let color_bytes = rgb565.to_le_bytes();
+                            let screen_x = ctx.x + offset_x + px;
+                            let screen_y = ctx.y + offset_y + py;
+                            let pixel_offset = (screen_y * ctx.stride + screen_x) * 2;
 
-                                // Draw pixel to screen
-                                let screen_x = x + offset_x + px;
-                                let screen_y = y + offset_y + py;
-                                let pixel_offset = (screen_y * stride + screen_x) * 2;
-
-                                if pixel_offset + 1 < pixels.len() {
-                                    pixels[pixel_offset].write(color_bytes[0]);
-                                    pixels[pixel_offset + 1].write(color_bytes[1]);
-                                }
+                            if pixel_offset + 1 < pixels.len() {
+                                pixels[pixel_offset].write(color_bytes[0]);
+                                pixels[pixel_offset + 1].write(color_bytes[1]);
                             }
                         }
                     }
                 }
-            }
-            Err(e) => {
-                log::error!("Failed to load PNG icon: {:?}", e);
             }
         }
     }
@@ -341,9 +439,9 @@ impl AndroidDisplay {
             // Try to lock the window buffer for drawing
             match native_window.lock(None) {
                 Ok(mut buffer) => {
-                    let window_width = buffer.width() as usize;
-                    let window_height = buffer.height() as usize;
-                    let stride = buffer.stride() as usize;
+                    let window_width = buffer.width();
+                    let window_height = buffer.height();
+                    let stride = buffer.stride();
 
                     // let format = buffer.format();
                     // info!(
@@ -443,7 +541,6 @@ impl AndroidDisplay {
                         stride,
                         controls_height,
                     );
-
                     // Unlock buffer to present to screen
                     drop(buffer);
 
@@ -472,8 +569,8 @@ impl AndroidDisplay {
 
 impl LedDisplay for AndroidDisplay {
     async fn write(&mut self, leds: &[RGB8; 256]) {
-        unsafe {
-            LEDS.copy_from_slice(leds);
+        if let Ok(mut led_array) = LEDS.lock() {
+            led_array.copy_from_slice(leds);
         }
         SHOULD_UPDATE_DISPLAY.store(true, Ordering::Relaxed);
 
@@ -492,6 +589,159 @@ impl AndroidController {
         Self { app }
     }
 
+    fn detect_gesture(&self, start: TouchPoint, end: TouchPoint) -> Option<GestureType> {
+        // Clear stale last_tap entries that are too old to be part of a double tap
+        if let Ok(mut last_tap_guard) = GESTURE_STATE.last_tap.write() {
+            if let Some(last_tap) = *last_tap_guard {
+                let time_since_last_tap =
+                    end.timestamp.duration_since(last_tap.timestamp).as_millis() as u64;
+                if time_since_last_tap > DOUBLE_TAP_MAX_TIME_MS * 2 {
+                    *last_tap_guard = None;
+                    info!("🧹 Cleared stale last_tap ({}ms old)", time_since_last_tap);
+                }
+            }
+        }
+
+        let dx = end.x - start.x;
+        let dy = end.y - start.y;
+        let distance = (dx * dx + dy * dy).sqrt();
+        let time_diff = end.timestamp.duration_since(start.timestamp).as_millis() as u64;
+
+        // Check for tap (short press with minimal movement)
+        if distance < TAP_MAX_DISTANCE && time_diff < MAX_SWIPE_TIME_MS {
+            // Check for double tap by comparing with last tap
+            if let Ok(last_tap_guard) = GESTURE_STATE.last_tap.read() {
+                if let Some(last_tap) = *last_tap_guard {
+                    let time_since_last_tap =
+                        end.timestamp.duration_since(last_tap.timestamp).as_millis() as u64;
+                    let distance_from_last_tap =
+                        ((end.x - last_tap.x).powi(2) + (end.y - last_tap.y).powi(2)).sqrt();
+
+                    info!("🔍 Checking double tap: time_diff={}ms (max={}ms), distance={:.1}px (max={:.1}px)", 
+                          time_since_last_tap, DOUBLE_TAP_MAX_TIME_MS, distance_from_last_tap, DOUBLE_TAP_MAX_DISTANCE);
+
+                    // If this tap is close enough in time and space to the last tap, it's a double tap
+                    if time_since_last_tap <= DOUBLE_TAP_MAX_TIME_MS
+                        && distance_from_last_tap <= DOUBLE_TAP_MAX_DISTANCE
+                    {
+                        info!("✅ Double tap detected! Clearing last_tap state.");
+                        // Clear the last tap to prevent triple taps from being detected as double taps
+                        drop(last_tap_guard);
+                        if let Ok(mut last_tap_write) = GESTURE_STATE.last_tap.write() {
+                            *last_tap_write = None;
+                        }
+                        return Some(GestureType::DoubleTap);
+                    } else {
+                        info!("❌ Not a double tap - conditions not met");
+                    }
+                } else {
+                    info!("🔍 No previous tap found for double tap check");
+                }
+            }
+
+            // Store this tap as the last tap for potential double tap detection
+            if let Ok(mut last_tap_guard) = GESTURE_STATE.last_tap.write() {
+                *last_tap_guard = Some(end);
+                info!(
+                    "💾 Stored tap at ({:.1}, {:.1}) for double tap detection",
+                    end.x, end.y
+                );
+            }
+
+            return Some(GestureType::Tap);
+        }
+
+        // Check for long press
+        if distance < TAP_MAX_DISTANCE && time_diff >= LONG_PRESS_TIME_MS {
+            return Some(GestureType::LongPress);
+        }
+
+        // Check for swipe gestures
+        if distance >= MIN_SWIPE_DISTANCE && time_diff <= MAX_SWIPE_TIME_MS {
+            let abs_dx = dx.abs();
+            let abs_dy = dy.abs();
+
+            // Determine primary direction
+            if abs_dx > abs_dy {
+                // Horizontal swipe
+                if dx > 0.0 {
+                    return Some(GestureType::SwipeRight);
+                } else {
+                    return Some(GestureType::SwipeLeft);
+                }
+            } else {
+                // Vertical swipe
+                if dy > 0.0 {
+                    return Some(GestureType::SwipeDown);
+                } else {
+                    return Some(GestureType::SwipeUp);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn handle_gesture(&self, gesture: GestureType) {
+        info!("🎯 Detected gesture: {:?}", gesture);
+
+        match gesture {
+            GestureType::SwipeLeft => {
+                INPUT_STATE.x_input.store(-1, Ordering::Relaxed);
+            }
+            GestureType::SwipeRight => {
+                INPUT_STATE.x_input.store(1, Ordering::Relaxed);
+            }
+            GestureType::SwipeUp => {
+                INPUT_STATE.y_input.store(-1, Ordering::Relaxed);
+            }
+            GestureType::SwipeDown => {
+                INPUT_STATE.y_input.store(1, Ordering::Relaxed);
+            }
+            GestureType::Tap => {
+                INPUT_STATE.joystick_pressed.store(true, Ordering::Relaxed);
+            }
+            GestureType::LongPress => {
+                INPUT_STATE.a_pressed.store(true, Ordering::Relaxed);
+            }
+            GestureType::DoubleTap => {
+                INPUT_STATE.b_pressed.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn is_in_game_area(&self, x: f32, y: f32) -> bool {
+        // Check if touch is in the main game area (not in button regions)
+        if let Some(native_window) = self.app.native_window() {
+            let window_width = native_window.width() as f32;
+            let window_height = native_window.height() as f32;
+            let controls_height = 150.0;
+            let controls_y_start = window_height - controls_height;
+
+            // Calculate button area bounds (now 4 buttons high on each side)
+            let button_width = 160.0;
+            let button_height = 160.0;
+            let button_gap = 20.0;
+            let total_button_height = 4.0 * button_height + 3.0 * button_gap;
+            let button_start_y = controls_y_start - total_button_height;
+
+            let left_button_right = 10.0 + button_width;
+            let right_button_left = window_width - button_width - 10.0;
+
+            // Touch is in game area if:
+            // 1. Above the button area, OR
+            // 2. In the center area between left and right buttons (and above controls)
+            let in_upper_area = y < button_start_y - 20.0; // Leave some margin above buttons
+            let in_center_area = x > left_button_right + 20.0
+                && x < right_button_left - 20.0
+                && y < controls_y_start - 20.0; // Above controls area
+
+            in_upper_area || in_center_area
+        } else {
+            false
+        }
+    }
+
     fn handle_touch_input(&self, x: usize, y: usize) {
         // Get window dimensions to calculate button positions
         if let Some(native_window) = self.app.native_window() {
@@ -507,16 +757,15 @@ impl AndroidController {
             INPUT_STATE.a_pressed.store(false, Ordering::Relaxed);
             INPUT_STATE.b_pressed.store(false, Ordering::Relaxed);
 
-            // SIMPLIFIED: Check side buttons using same simple positions as drawing
-            let side_button_width = 160; // Twice bigger
-            let side_button_height = 160; // Twice bigger
+            // Check side buttons using same positions as drawing
+            let side_button_width = 160;
+            let side_button_height = 160;
             let left_button_x = 10;
             let right_button_x = window_width - side_button_width - 10;
-            let button_start_y = controls_y_start - (3 * side_button_height + 2 * 20); // Position so all 3 buttons fit above controls area
+            let button_start_y = controls_y_start - (4 * side_button_height + 3 * 20); // Position so all 4 buttons fit above controls area
+            let button_gap = 20;
 
-            let button_gap = 20; // Bigger gap to match drawing
-
-            // Left side buttons: Left, Up, A (3 buttons vertically)
+            // Left side buttons: Left, Up, A, Enter (4 buttons vertically)
             // Left button
             if x >= left_button_x
                 && x < left_button_x + side_button_width
@@ -541,8 +790,16 @@ impl AndroidController {
             {
                 INPUT_STATE.a_pressed.store(true, Ordering::Relaxed); // A
             }
+            // Enter button (4th button on left side)
+            if x >= left_button_x
+                && x < left_button_x + side_button_width
+                && y >= button_start_y + 3 * (side_button_height + button_gap)
+                && y < button_start_y + 3 * (side_button_height + button_gap) + side_button_height
+            {
+                INPUT_STATE.joystick_pressed.store(true, Ordering::Relaxed); // Enter
+            }
 
-            // Right side buttons: Right, Down, B (3 buttons vertically)
+            // Right side buttons: Right, Down, B, Gesture Toggle (4 buttons vertically)
             // Right button
             if x >= right_button_x
                 && x < right_button_x + side_button_width
@@ -566,20 +823,6 @@ impl AndroidController {
                 && y < button_start_y + 2 * (side_button_height + button_gap) + side_button_height
             {
                 INPUT_STATE.b_pressed.store(true, Ordering::Relaxed); // B
-            }
-
-            // Check big ENTER button (updated to match new drawing size)
-            let big_button_width = window_width * 2 / 3; // Bigger since no center buttons
-            let big_button_height = controls_height; // Twice as high - full controls area height
-            let big_button_x = (window_width - big_button_width) / 2; // Center horizontally
-            let big_button_y = controls_y_start; // Start at bottom of screen
-
-            if x >= big_button_x
-                && x < big_button_x + big_button_width
-                && y >= big_button_y
-                && y < big_button_y + big_button_height
-            {
-                INPUT_STATE.joystick_pressed.store(true, Ordering::Relaxed);
             }
         }
     }
@@ -629,16 +872,98 @@ impl AndroidController {
                                 // Only handle touch screen events
                                 if motion_event.source() == Source::Touchscreen {
                                     let pointer = motion_event.pointer_at_index(0);
-                                    let x = pointer.x() as usize;
-                                    let y = pointer.y() as usize;
+                                    let x = pointer.x();
+                                    let y = pointer.y();
+                                    let now = std::time::Instant::now();
 
                                     match motion_event.action() {
-                                        MotionAction::Down | MotionAction::Move => {
-                                            self.handle_touch_input(x, y);
+                                        MotionAction::Down => {
+                                            let touch_point = TouchPoint {
+                                                x,
+                                                y,
+                                                timestamp: now,
+                                            };
+
+                                            // Store touch start for gesture detection
+                                            if let Ok(mut start) = GESTURE_STATE.touch_start.write()
+                                            {
+                                                *start = Some(touch_point);
+                                            }
+                                            if let Ok(mut last) = GESTURE_STATE.last_touch.write() {
+                                                *last = Some(touch_point);
+                                            }
+
+                                            // If gesture detection is enabled and in game area, don't handle as button
+                                            if GESTURE_STATE
+                                                .gestures_enabled
+                                                .load(Ordering::Relaxed)
+                                                && self.is_in_game_area(x, y)
+                                            {
+                                                // Only gesture detection, no button handling
+                                                true
+                                            } else {
+                                                // Handle as button press
+                                                self.handle_touch_input(x as usize, y as usize);
+                                                true
+                                            }
+                                        }
+                                        MotionAction::Move => {
+                                            let touch_point = TouchPoint {
+                                                x,
+                                                y,
+                                                timestamp: now,
+                                            };
+
+                                            // Update last touch for gesture tracking
+                                            if let Ok(mut last) = GESTURE_STATE.last_touch.write() {
+                                                *last = Some(touch_point);
+                                            }
+
+                                            // Handle continuous button presses only if not in gesture area
+                                            if !GESTURE_STATE
+                                                .gestures_enabled
+                                                .load(Ordering::Relaxed)
+                                                || !self.is_in_game_area(x, y)
+                                            {
+                                                self.handle_touch_input(x as usize, y as usize);
+                                            }
                                             true
                                         }
                                         MotionAction::Up => {
-                                            // Clear all touch inputs when finger lifts
+                                            let touch_point = TouchPoint {
+                                                x,
+                                                y,
+                                                timestamp: now,
+                                            };
+
+                                            // Try to detect gesture
+                                            if GESTURE_STATE
+                                                .gestures_enabled
+                                                .load(Ordering::Relaxed)
+                                            {
+                                                if let Ok(start_guard) =
+                                                    GESTURE_STATE.touch_start.read()
+                                                {
+                                                    if let Some(start) = *start_guard {
+                                                        if let Some(gesture) =
+                                                            self.detect_gesture(start, touch_point)
+                                                        {
+                                                            self.handle_gesture(gesture);
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Clear gesture state
+                                            if let Ok(mut start) = GESTURE_STATE.touch_start.write()
+                                            {
+                                                *start = None;
+                                            }
+                                            if let Ok(mut last) = GESTURE_STATE.last_touch.write() {
+                                                *last = None;
+                                            }
+
+                                            // Clear all input states
                                             INPUT_STATE.x_input.store(0, Ordering::Relaxed);
                                             INPUT_STATE.y_input.store(0, Ordering::Relaxed);
                                             INPUT_STATE
@@ -673,6 +998,24 @@ impl AndroidController {
                 log::error!("Failed to get input events iterator: {err:?}");
             }
         }
+    }
+}
+
+impl AndroidController {
+    /// Toggle between gesture mode and button mode
+    pub fn toggle_gesture_mode(&self) {
+        let current = GESTURE_STATE.gestures_enabled.load(Ordering::Relaxed);
+        GESTURE_STATE
+            .gestures_enabled
+            .store(!current, Ordering::Relaxed);
+
+        let mode = if !current { "gesture" } else { "button" };
+        info!("🎮 Switched to {} mode", mode);
+    }
+
+    /// Check if gestures are currently enabled
+    pub fn gestures_enabled(&self) -> bool {
+        GESTURE_STATE.gestures_enabled.load(Ordering::Relaxed)
     }
 }
 

@@ -3,6 +3,7 @@ members = [
     "tetris-lib",
     "tetris-console",
     "tetris-wasm",
-    "tetris-android",
+    # "tetris-android",
+    # "tetris-embedded",
 ]
 resolver = "2"
