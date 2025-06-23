@@ -660,6 +660,21 @@ impl AndroidController {
         Self { app }
     }
 
+    // Helper method to ensure input events are processed regularly
+    fn ensure_input_processed(&self) {
+        // Only process events once per 10ms to avoid race conditions
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let last_time = LAST_INPUT_PROCESS_TIME.load(Ordering::Relaxed);
+
+        if now - last_time > 10 {
+            self.process_input_events();
+            LAST_INPUT_PROCESS_TIME.store(now, Ordering::Relaxed);
+        }
+    }
+
     fn detect_gesture(&self, start: TouchPoint, end: TouchPoint) -> Option<GestureType> {
         // Clear stale last_tap entries that are too old to be part of a double tap
         if let Ok(mut last_tap_guard) = GESTURE_STATE.last_tap.write() {
@@ -1117,17 +1132,7 @@ impl AndroidController {
 
 impl GameController for AndroidController {
     async fn read_x(&mut self) -> i8 {
-        // Only process events once per 10ms to avoid race conditions
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        let last_time = LAST_INPUT_PROCESS_TIME.load(Ordering::Relaxed);
-
-        if now - last_time > 10 {
-            self.process_input_events();
-            LAST_INPUT_PROCESS_TIME.store(now, Ordering::Relaxed);
-        }
+        self.ensure_input_processed();
 
         let value = INPUT_STATE.x_input.load(Ordering::Relaxed);
 
@@ -1143,6 +1148,8 @@ impl GameController for AndroidController {
     }
 
     async fn read_y(&mut self) -> i8 {
+        self.ensure_input_processed();
+
         let value = INPUT_STATE.y_input.load(Ordering::Relaxed);
 
         // Clear gesture input after reading if it was set by a gesture
@@ -1157,6 +1164,8 @@ impl GameController for AndroidController {
     }
 
     fn joystick_was_pressed(&self) -> bool {
+        self.ensure_input_processed();
+
         let current = INPUT_STATE.joystick_pressed.load(Ordering::Relaxed);
         let prev = INPUT_STATE
             .prev_joystick_pressed
@@ -1174,6 +1183,8 @@ impl GameController for AndroidController {
     }
 
     fn a_was_pressed(&self) -> bool {
+        self.ensure_input_processed();
+
         let current = INPUT_STATE.a_pressed.load(Ordering::Relaxed);
         let prev = INPUT_STATE.prev_a_pressed.swap(current, Ordering::Relaxed);
 
@@ -1186,6 +1197,8 @@ impl GameController for AndroidController {
     }
 
     fn b_was_pressed(&self) -> bool {
+        self.ensure_input_processed();
+
         let current = INPUT_STATE.b_pressed.load(Ordering::Relaxed);
         let prev = INPUT_STATE.prev_b_pressed.swap(current, Ordering::Relaxed);
 
