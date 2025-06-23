@@ -7,7 +7,10 @@ use fontdue::{
 use log::info;
 use smart_leds::RGB8;
 
-use std::sync::{atomic::{AtomicBool, AtomicI8, Ordering}, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, AtomicI8, Ordering},
+    Mutex,
+};
 use std::time::Duration;
 use tetris_lib::{
     common::{GameController, LedDisplay, Timer, SCREEN_HEIGHT, SCREEN_WIDTH},
@@ -40,7 +43,7 @@ struct GestureState {
     touch_start: std::sync::RwLock<Option<TouchPoint>>,
     last_touch: std::sync::RwLock<Option<TouchPoint>>,
     last_tap: std::sync::RwLock<Option<TouchPoint>>, // Track last tap for double tap detection
-    gestures_enabled: AtomicBool,
+    started_in_game_area: std::sync::RwLock<bool>, // Track if current gesture started in LED display
 }
 
 impl Default for GestureState {
@@ -49,7 +52,7 @@ impl Default for GestureState {
             touch_start: std::sync::RwLock::new(None),
             last_touch: std::sync::RwLock::new(None),
             last_tap: std::sync::RwLock::new(None), // Initialize last tap tracking
-            gestures_enabled: AtomicBool::new(true),
+            started_in_game_area: std::sync::RwLock::new(false),
         }
     }
 }
@@ -58,7 +61,7 @@ static GESTURE_STATE: GestureState = GestureState {
     touch_start: std::sync::RwLock::new(None),
     last_touch: std::sync::RwLock::new(None),
     last_tap: std::sync::RwLock::new(None), // Initialize last tap tracking in static
-    gestures_enabled: AtomicBool::new(true),
+    started_in_game_area: std::sync::RwLock::new(false),
 };
 
 // Gesture detection constants
@@ -90,6 +93,12 @@ struct InputState {
     prev_joystick_pressed: AtomicBool,
     prev_a_pressed: AtomicBool,
     prev_b_pressed: AtomicBool,
+    // Flags to track if gesture inputs should be cleared after next read
+    gesture_x_pending: AtomicBool,
+    gesture_y_pending: AtomicBool,
+    gesture_joystick_pending: AtomicBool,
+    gesture_a_pending: AtomicBool,
+    gesture_b_pending: AtomicBool,
 }
 
 static INPUT_STATE: InputState = InputState {
@@ -101,7 +110,15 @@ static INPUT_STATE: InputState = InputState {
     prev_joystick_pressed: AtomicBool::new(false),
     prev_a_pressed: AtomicBool::new(false),
     prev_b_pressed: AtomicBool::new(false),
+    gesture_x_pending: AtomicBool::new(false),
+    gesture_y_pending: AtomicBool::new(false),
+    gesture_joystick_pending: AtomicBool::new(false),
+    gesture_a_pending: AtomicBool::new(false),
+    gesture_b_pending: AtomicBool::new(false),
 };
+
+// Track when we last processed input events to avoid processing too frequently
+static LAST_INPUT_PROCESS_TIME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 // No embedded fonts - using system fonts only
 
@@ -121,7 +138,7 @@ impl TextRenderer {
         } else {
             return Err("No suitable system font found for ASCII characters".into());
         };
-        
+
         let layout = Layout::new(CoordinateSystem::PositiveYDown);
         Ok(Self { font, layout })
     }
@@ -207,7 +224,12 @@ struct ButtonRect {
 
 impl ButtonRect {
     fn new(x: usize, y: usize, width: usize, height: usize) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 }
 
@@ -221,7 +243,12 @@ struct RenderContext {
 
 impl RenderContext {
     fn new(x: usize, y: usize, max_size: usize, stride: usize) -> Self {
-        Self { x, y, max_size, stride }
+        Self {
+            x,
+            y,
+            max_size,
+            stride,
+        }
     }
 }
 
@@ -267,26 +294,46 @@ impl AndroidDisplay {
         // Left side buttons: Left, Up, A, Enter (4 buttons vertically)
         self.draw_button_with_text(
             pixels,
-            ButtonRect::new(left_button_x, button_start_y, side_button_width, side_button_height),
+            ButtonRect::new(
+                left_button_x,
+                button_start_y,
+                side_button_width,
+                side_button_height,
+            ),
             stride,
             "←",
         );
         self.draw_button_with_text(
             pixels,
-            ButtonRect::new(left_button_x, button_start_y + side_button_height + button_gap, side_button_width, side_button_height),
+            ButtonRect::new(
+                left_button_x,
+                button_start_y + side_button_height + button_gap,
+                side_button_width,
+                side_button_height,
+            ),
             stride,
             "↑",
         );
         self.draw_button_with_text(
             pixels,
-            ButtonRect::new(left_button_x, button_start_y + 2 * (side_button_height + button_gap), side_button_width, side_button_height),
+            ButtonRect::new(
+                left_button_x,
+                button_start_y + 2 * (side_button_height + button_gap),
+                side_button_width,
+                side_button_height,
+            ),
             stride,
             "A",
         );
         // Enter button on left side
         self.draw_button_with_text(
             pixels,
-            ButtonRect::new(left_button_x, button_start_y + 3 * (side_button_height + button_gap), side_button_width, side_button_height),
+            ButtonRect::new(
+                left_button_x,
+                button_start_y + 3 * (side_button_height + button_gap),
+                side_button_width,
+                side_button_height,
+            ),
             stride,
             "⏎",
         );
@@ -294,19 +341,34 @@ impl AndroidDisplay {
         // Right side buttons: Right, Down, B, Gesture Toggle (4 buttons vertically)
         self.draw_button_with_text(
             pixels,
-            ButtonRect::new(right_button_x, button_start_y, side_button_width, side_button_height),
+            ButtonRect::new(
+                right_button_x,
+                button_start_y,
+                side_button_width,
+                side_button_height,
+            ),
             stride,
             "→",
         );
         self.draw_button_with_text(
             pixels,
-            ButtonRect::new(right_button_x, button_start_y + side_button_height + button_gap, side_button_width, side_button_height),
+            ButtonRect::new(
+                right_button_x,
+                button_start_y + side_button_height + button_gap,
+                side_button_width,
+                side_button_height,
+            ),
             stride,
             "↓",
         );
         self.draw_button_with_text(
             pixels,
-            ButtonRect::new(right_button_x, button_start_y + 2 * (side_button_height + button_gap), side_button_width, side_button_height),
+            ButtonRect::new(
+                right_button_x,
+                button_start_y + 2 * (side_button_height + button_gap),
+                side_button_width,
+                side_button_height,
+            ),
             stride,
             "B",
         );
@@ -332,7 +394,8 @@ impl AndroidDisplay {
 
                 if pixel_offset + 1 < pixels.len() {
                     // Draw border (2-pixel wide)
-                    let is_border = px < 2 || px >= rect.width - 2 || py < 2 || py >= rect.height - 2;
+                    let is_border =
+                        px < 2 || px >= rect.width - 2 || py < 2 || py >= rect.height - 2;
                     let color = if is_border { border_color } else { fill_color };
 
                     pixels[pixel_offset].write(color[0]);
@@ -350,7 +413,7 @@ impl AndroidDisplay {
         let text = match label {
             "←" => "<",
             "→" => ">",
-            "↑" => "^", 
+            "↑" => "^",
             "↓" => "v",
             "A" => "A",
             "B" => "B",
@@ -366,13 +429,7 @@ impl AndroidDisplay {
 
         // Draw text pixels
         let render_ctx = RenderContext::new(icon_x, icon_y, icon_size, stride);
-        self.draw_text_pixels(
-            pixels,
-            render_ctx,
-            &text_pixels,
-            text_width,
-            text_height,
-        );
+        self.draw_text_pixels(pixels, render_ctx, &text_pixels, text_width, text_height);
     }
 
     fn draw_text_pixels(
@@ -443,17 +500,16 @@ impl AndroidDisplay {
                     let window_height = buffer.height();
                     let stride = buffer.stride();
 
-                    // let format = buffer.format();
-                    // info!(
-                    //     "📱 Window: {}x{}, stride: {}, format: {:?}",
-                    //     window_width, window_height, stride, format
-                    // );
-
                     // Calculate scaling to fit the 8x32 display in the window
                     let scale_x = window_width / SCREEN_WIDTH;
                     let scale_y = window_height / SCREEN_HEIGHT;
                     let base_scale = scale_x.min(scale_y).max(1);
-                    let scale = (((base_scale * 3) as f64 * 0.97) as usize).min(60); // 3x larger, max 60x
+                    // Use base_scale but limit it to prevent extreme sizes
+                    let scale = base_scale.min(100); // Cap at 100x scale to prevent issues
+                                                     // debug!(
+                                                     //     "📱 Window: {}x{}, stride: {}, scale: {}, base_scale: {}",
+                                                     //     window_width, window_height, stride, scale, base_scale
+                                                     // );
 
                     // Center the display in the upper portion, leaving space for controls
                     let display_width = SCREEN_WIDTH * scale;
@@ -461,8 +517,23 @@ impl AndroidDisplay {
                     let controls_height = 150; // Smaller controls area to give more space to game
                     let game_area_height = window_height.saturating_sub(controls_height);
 
-                    let offset_x = (window_width - display_width) / 2;
-                    let offset_y = (game_area_height - display_height) / 2;
+                    // Ensure display fits on screen - if too large, it will be clipped but positioned correctly
+                    let offset_x = if display_width <= window_width {
+                        (window_width - display_width) / 2
+                    } else {
+                        0 // If display is larger than window, start at left edge
+                    };
+
+                    let offset_y = if display_height <= game_area_height {
+                        (game_area_height - display_height) / 2
+                    } else {
+                        0 // If display is larger than available height, start at top
+                    };
+
+                    // debug!(
+                    //     "🎮 Display: {}x{} at ({}, {}), window: {}x{}, game_area_height: {}",
+                    //     display_width, display_height, offset_x, offset_y, window_width, window_height, game_area_height
+                    // );
 
                     // Get buffer as slice of pixels
                     let Some(pixels) = buffer.bytes() else {
@@ -683,60 +754,85 @@ impl AndroidController {
     }
 
     fn handle_gesture(&self, gesture: GestureType) {
-        info!("🎯 Detected gesture: {:?}", gesture);
+        info!("🎯 Setting gesture input: {:?}", gesture);
 
         match gesture {
             GestureType::SwipeLeft => {
                 INPUT_STATE.x_input.store(-1, Ordering::Relaxed);
+                INPUT_STATE.gesture_x_pending.store(true, Ordering::Relaxed);
+                info!("✅ Set x_input=-1, gesture_x_pending=true");
             }
             GestureType::SwipeRight => {
                 INPUT_STATE.x_input.store(1, Ordering::Relaxed);
+                INPUT_STATE.gesture_x_pending.store(true, Ordering::Relaxed);
+                info!("✅ Set x_input=1, gesture_x_pending=true");
             }
             GestureType::SwipeUp => {
                 INPUT_STATE.y_input.store(-1, Ordering::Relaxed);
+                INPUT_STATE.gesture_y_pending.store(true, Ordering::Relaxed);
+                info!("✅ Set y_input=-1, gesture_y_pending=true");
             }
             GestureType::SwipeDown => {
                 INPUT_STATE.y_input.store(1, Ordering::Relaxed);
+                INPUT_STATE.gesture_y_pending.store(true, Ordering::Relaxed);
+                info!("✅ Set y_input=1, gesture_y_pending=true");
             }
             GestureType::Tap => {
                 INPUT_STATE.joystick_pressed.store(true, Ordering::Relaxed);
+                INPUT_STATE
+                    .gesture_joystick_pending
+                    .store(true, Ordering::Relaxed);
+                info!("✅ Set joystick_pressed=true, gesture_joystick_pending=true");
             }
             GestureType::LongPress => {
                 INPUT_STATE.a_pressed.store(true, Ordering::Relaxed);
+                INPUT_STATE.gesture_a_pending.store(true, Ordering::Relaxed);
+                info!("✅ Set a_pressed=true, gesture_a_pending=true");
             }
             GestureType::DoubleTap => {
                 INPUT_STATE.b_pressed.store(true, Ordering::Relaxed);
+                INPUT_STATE.gesture_b_pending.store(true, Ordering::Relaxed);
+                info!("✅ Set b_pressed=true, gesture_b_pending=true");
             }
         }
     }
 
     fn is_in_game_area(&self, x: f32, y: f32) -> bool {
-        // Check if touch is in the main game area (not in button regions)
+        // Check if touch is actually within the rendered LED display bounds
         if let Some(native_window) = self.app.native_window() {
-            let window_width = native_window.width() as f32;
-            let window_height = native_window.height() as f32;
-            let controls_height = 150.0;
-            let controls_y_start = window_height - controls_height;
+            let window_width = native_window.width() as usize;
+            let window_height = native_window.height() as usize;
 
-            // Calculate button area bounds (now 4 buttons high on each side)
-            let button_width = 160.0;
-            let button_height = 160.0;
-            let button_gap = 20.0;
-            let total_button_height = 4.0 * button_height + 3.0 * button_gap;
-            let button_start_y = controls_y_start - total_button_height;
+            // Calculate the same scaling and positioning as in render_to_native_window
+            let scale_x = window_width / SCREEN_WIDTH;
+            let scale_y = window_height / SCREEN_HEIGHT;
+            let base_scale = scale_x.min(scale_y).max(1);
+            let scale = base_scale.min(100);
 
-            let left_button_right = 10.0 + button_width;
-            let right_button_left = window_width - button_width - 10.0;
+            let display_width = SCREEN_WIDTH * scale;
+            let display_height = SCREEN_HEIGHT * scale;
+            let controls_height = 150;
+            let game_area_height = window_height.saturating_sub(controls_height);
 
-            // Touch is in game area if:
-            // 1. Above the button area, OR
-            // 2. In the center area between left and right buttons (and above controls)
-            let in_upper_area = y < button_start_y - 20.0; // Leave some margin above buttons
-            let in_center_area = x > left_button_right + 20.0
-                && x < right_button_left - 20.0
-                && y < controls_y_start - 20.0; // Above controls area
+            let offset_x = if display_width <= window_width {
+                (window_width - display_width) / 2
+            } else {
+                0
+            };
 
-            in_upper_area || in_center_area
+            let offset_y = if display_height <= game_area_height {
+                (game_area_height - display_height) / 2
+            } else {
+                0
+            };
+
+            // Check if touch is within the actual LED display bounds
+            let display_left = offset_x as f32;
+            let display_right = (offset_x + display_width) as f32;
+            let display_top = offset_y as f32;
+            let display_bottom = (offset_y + display_height) as f32;
+
+            x >= display_left && x <= display_right && y >= display_top && y <= display_bottom
         } else {
             false
         }
@@ -893,19 +989,19 @@ impl AndroidController {
                                                 *last = Some(touch_point);
                                             }
 
-                                            // If gesture detection is enabled and in game area, don't handle as button
-                                            if GESTURE_STATE
-                                                .gestures_enabled
-                                                .load(Ordering::Relaxed)
-                                                && self.is_in_game_area(x, y)
+                                            // Track whether this gesture started in the LED display area
+                                            let started_in_led = self.is_in_game_area(x, y);
+                                            if let Ok(mut started) =
+                                                GESTURE_STATE.started_in_game_area.write()
                                             {
-                                                // Only gesture detection, no button handling
-                                                true
-                                            } else {
-                                                // Handle as button press
-                                                self.handle_touch_input(x as usize, y as usize);
-                                                true
+                                                *started = started_in_led;
                                             }
+
+                                            // Handle button presses only if touch started outside LED display area
+                                            if !started_in_led {
+                                                self.handle_touch_input(x as usize, y as usize);
+                                            }
+                                            true
                                         }
                                         MotionAction::Move => {
                                             let touch_point = TouchPoint {
@@ -919,13 +1015,13 @@ impl AndroidController {
                                                 *last = Some(touch_point);
                                             }
 
-                                            // Handle continuous button presses only if not in gesture area
-                                            if !GESTURE_STATE
-                                                .gestures_enabled
-                                                .load(Ordering::Relaxed)
-                                                || !self.is_in_game_area(x, y)
+                                            // Handle continuous button presses only if gesture didn't start in LED area
+                                            if let Ok(started) =
+                                                GESTURE_STATE.started_in_game_area.read()
                                             {
-                                                self.handle_touch_input(x as usize, y as usize);
+                                                if !*started {
+                                                    self.handle_touch_input(x as usize, y as usize);
+                                                }
                                             }
                                             true
                                         }
@@ -936,18 +1032,25 @@ impl AndroidController {
                                                 timestamp: now,
                                             };
 
-                                            // Try to detect gesture
-                                            if GESTURE_STATE
-                                                .gestures_enabled
-                                                .load(Ordering::Relaxed)
+                                            // Check if gesture started in game area BEFORE we clear state
+                                            let started_in_led = if let Ok(started) =
+                                                GESTURE_STATE.started_in_game_area.read()
                                             {
-                                                if let Ok(start_guard) =
-                                                    GESTURE_STATE.touch_start.read()
-                                                {
-                                                    if let Some(start) = *start_guard {
-                                                        if let Some(gesture) =
-                                                            self.detect_gesture(start, touch_point)
-                                                        {
+                                                *started
+                                            } else {
+                                                false
+                                            };
+
+                                            // Always try to detect gesture everywhere
+                                            if let Ok(start_guard) =
+                                                GESTURE_STATE.touch_start.read()
+                                            {
+                                                if let Some(start) = *start_guard {
+                                                    if let Some(gesture) =
+                                                        self.detect_gesture(start, touch_point)
+                                                    {
+                                                        // Only apply gesture if it started in LED display area
+                                                        if started_in_led {
                                                             self.handle_gesture(gesture);
                                                         }
                                                     }
@@ -962,15 +1065,26 @@ impl AndroidController {
                                             if let Ok(mut last) = GESTURE_STATE.last_touch.write() {
                                                 *last = None;
                                             }
+                                            if let Ok(mut started) =
+                                                GESTURE_STATE.started_in_game_area.write()
+                                            {
+                                                *started = false;
+                                            }
 
-                                            // Clear all input states
-                                            INPUT_STATE.x_input.store(0, Ordering::Relaxed);
-                                            INPUT_STATE.y_input.store(0, Ordering::Relaxed);
-                                            INPUT_STATE
-                                                .joystick_pressed
-                                                .store(false, Ordering::Relaxed);
-                                            INPUT_STATE.a_pressed.store(false, Ordering::Relaxed);
-                                            INPUT_STATE.b_pressed.store(false, Ordering::Relaxed);
+                                            // Only clear button input states if gesture didn't start in LED area
+                                            if !started_in_led {
+                                                INPUT_STATE.x_input.store(0, Ordering::Relaxed);
+                                                INPUT_STATE.y_input.store(0, Ordering::Relaxed);
+                                                INPUT_STATE
+                                                    .joystick_pressed
+                                                    .store(false, Ordering::Relaxed);
+                                                INPUT_STATE
+                                                    .a_pressed
+                                                    .store(false, Ordering::Relaxed);
+                                                INPUT_STATE
+                                                    .b_pressed
+                                                    .store(false, Ordering::Relaxed);
+                                            }
                                             true
                                         }
                                         _ => false,
@@ -1001,33 +1115,45 @@ impl AndroidController {
     }
 }
 
-impl AndroidController {
-    /// Toggle between gesture mode and button mode
-    pub fn toggle_gesture_mode(&self) {
-        let current = GESTURE_STATE.gestures_enabled.load(Ordering::Relaxed);
-        GESTURE_STATE
-            .gestures_enabled
-            .store(!current, Ordering::Relaxed);
-
-        let mode = if !current { "gesture" } else { "button" };
-        info!("🎮 Switched to {} mode", mode);
-    }
-
-    /// Check if gestures are currently enabled
-    pub fn gestures_enabled(&self) -> bool {
-        GESTURE_STATE.gestures_enabled.load(Ordering::Relaxed)
-    }
-}
-
 impl GameController for AndroidController {
     async fn read_x(&mut self) -> i8 {
-        self.process_input_events();
-        INPUT_STATE.x_input.load(Ordering::Relaxed)
+        // Only process events once per 10ms to avoid race conditions
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let last_time = LAST_INPUT_PROCESS_TIME.load(Ordering::Relaxed);
+
+        if now - last_time > 10 {
+            self.process_input_events();
+            LAST_INPUT_PROCESS_TIME.store(now, Ordering::Relaxed);
+        }
+
+        let value = INPUT_STATE.x_input.load(Ordering::Relaxed);
+
+        // Clear gesture input after reading if it was set by a gesture
+        if INPUT_STATE.gesture_x_pending.swap(false, Ordering::Relaxed) {
+            info!("📖 Reading x_input={}, clearing gesture", value);
+            INPUT_STATE.x_input.store(0, Ordering::Relaxed);
+        } else if value != 0 {
+            info!("📖 Reading x_input={} (button input)", value);
+        }
+
+        value
     }
 
     async fn read_y(&mut self) -> i8 {
-        self.process_input_events();
-        INPUT_STATE.y_input.load(Ordering::Relaxed)
+        let value = INPUT_STATE.y_input.load(Ordering::Relaxed);
+
+        // Clear gesture input after reading if it was set by a gesture
+        if INPUT_STATE.gesture_y_pending.swap(false, Ordering::Relaxed) {
+            info!("📖 Reading y_input={}, clearing gesture", value);
+            INPUT_STATE.y_input.store(0, Ordering::Relaxed);
+        } else if value != 0 {
+            info!("📖 Reading y_input={} (button input)", value);
+        }
+
+        value
     }
 
     fn joystick_was_pressed(&self) -> bool {
@@ -1035,18 +1161,39 @@ impl GameController for AndroidController {
         let prev = INPUT_STATE
             .prev_joystick_pressed
             .swap(current, Ordering::Relaxed);
+
+        // Clear gesture input after reading if it was set by a gesture
+        if INPUT_STATE
+            .gesture_joystick_pending
+            .swap(false, Ordering::Relaxed)
+        {
+            INPUT_STATE.joystick_pressed.store(false, Ordering::Relaxed);
+        }
+
         current && !prev
     }
 
     fn a_was_pressed(&self) -> bool {
         let current = INPUT_STATE.a_pressed.load(Ordering::Relaxed);
         let prev = INPUT_STATE.prev_a_pressed.swap(current, Ordering::Relaxed);
+
+        // Clear gesture input after reading if it was set by a gesture
+        if INPUT_STATE.gesture_a_pending.swap(false, Ordering::Relaxed) {
+            INPUT_STATE.a_pressed.store(false, Ordering::Relaxed);
+        }
+
         current && !prev
     }
 
     fn b_was_pressed(&self) -> bool {
         let current = INPUT_STATE.b_pressed.load(Ordering::Relaxed);
         let prev = INPUT_STATE.prev_b_pressed.swap(current, Ordering::Relaxed);
+
+        // Clear gesture input after reading if it was set by a gesture
+        if INPUT_STATE.gesture_b_pending.swap(false, Ordering::Relaxed) {
+            INPUT_STATE.b_pressed.store(false, Ordering::Relaxed);
+        }
+
         current && !prev
     }
 }
